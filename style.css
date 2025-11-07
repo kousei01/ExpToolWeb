@@ -6,7 +6,7 @@
 .hotspot {
     position: absolute;
     top: 150px; /* 画像の上からの位置 */
-    left: 80px;  /* 画像の左からの位置 */
+    left: 360px;  /* 画像の左からの位置 */
     width: 50px;
     height: 50px;
     cursor: pointer; /* カーソルをポインターにする */
@@ -19,4 +19,7 @@
     color: white;
     padding: 10px;
     border-radius: 5px;
+    width: 200px;
+    word-wrap:break-word;
+    box-sizing: border-box;
 }
