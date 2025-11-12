@@ -16,15 +16,12 @@
 
             <!-- オシロスコープの画面領域 -->
         <div id="screen">
-            <!-- 波形画像（最初は非表示 or 空っぽにしておく） -->
-            <img id="waveform-image" src="" alt="波形">
+            <!-- 波形画像imgの代わりに、描画用のcanvasを設置 -->
+            <canvas id="oscilloscope-screen" width="400" height="300"></canvas>
         </div>
     </div>
 
-    <div id="screen">
-        <!-- 波形画像imgの代わりに、描画用のcanvasを設置 -->
-        <canvas id="oscilloscope-screen" width="400" height="300"></canvas>
-    </div>
+
 
     <script src="script.js"></script>
 </body>
