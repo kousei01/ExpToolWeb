@@ -14,10 +14,10 @@
 
 #screen {
     position: absolute;
-    top: 80px;
-    left: 150px;
-    width: 200px;  /* 画面のサイズに合わせる */
-    height: 150px; /* 画面のサイズに合わせる */
+    top: 30px;
+    left: 40px;
+    width: 275px;  /* 画面のサイズに合わせる */
+    height: 120px; /* 画面のサイズに合わせる */
     background-color: #333; /* 電源OFF時の画面の色 */
 }
 
@@ -25,5 +25,9 @@
 #waveform-image {
     width: 100%;  /* 親要素(screen)の幅に合わせる */
     height: 100%; /* 親要素(screen)の高さに合わせる */
+    display: none; /* 初期状態では非表示 */
 }
 
+#waveform-image.visible {
+    display: block; /* ★重要：表示状態に切り替える */
+}
