@@ -1,19 +1,22 @@
-const hotspot = document.querySelector('.hotspot');
-const tooltip = document.querySelector('.tooltip');
+// script.js
 
-// ホットスポットにマウスが乗ったときの処理
-hotspot.addEventListener('mouseover', function() {
-    tooltip.textContent = this.dataset.description; // 説明文を設定
-    tooltip.style.display = 'block'; // ツールチップを表示
-});
+// --- 操作したいHTML要素を取得する ---
+// 電源ボタンの要素
+const powerButton = document.querySelector('#power-button');
+// 波形画像の要素
+const waveformImage = document.querySelector('#waveform-image');
 
-// マウスが動いたときにツールチップを追従させる処理
-hotspot.addEventListener('mousemove', function(e) {
-    tooltip.style.left = e.pageX + 10 + 'px';
-    tooltip.style.top = e.pageY + 10 + 'px';
-});
+// --- 電源ボタンがクリックされたときの処理を定義する ---
+powerButton.addEventListener('click', function() {
+    console.log('電源ボタンがクリックされました！'); // 動作確認用のログ
 
-// ホットスポットからマウスが外れたときの処理
-hotspot.addEventListener('mouseout', function() {
-    tooltip.style.display = 'none'; // ツールチップを非表示
+    // 波形画像のsrc属性に、表示したい画像のパスを設定する
+    waveformImage.src = 'waveform.png';
+
+    // （応用）もう一度押したら消す（トグル機能）
+    if (waveformImage.src.includes('waveform.png')) {
+        waveformImage.src = ''; // srcを空にして非表示に
+    } else {
+        waveformImage.src = 'waveform.png'; // srcに画像を設定して表示
+    }
 });

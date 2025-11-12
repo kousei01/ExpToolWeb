@@ -3,23 +3,27 @@
     width: 500px;
 }
 
-.hotspot {
+#power-button {
     position: absolute;
-    top: 150px; /* 画像の上からの位置 */
-    left: 360px;  /* 画像の左からの位置 */
+    top: 150px;
+    left: 360px;
     width: 50px;
     height: 50px;
-    cursor: pointer; /* カーソルをポインターにする */
+    cursor: pointer;
 }
 
-.tooltip {
-    display: none; /* 最初は非表示 */
+#screen {
     position: absolute;
-    background-color: black;
-    color: white;
-    padding: 10px;
-    border-radius: 5px;
-    width: 200px;
-    word-wrap:break-word;
-    box-sizing: border-box;
+    top: 80px;
+    left: 150px;
+    width: 200px;  /* 画面のサイズに合わせる */
+    height: 150px; /* 画面のサイズに合わせる */
+    background-color: #333; /* 電源OFF時の画面の色 */
 }
+
+/* 波形画像のスタイル */
+#waveform-image {
+    width: 100%;  /* 親要素(screen)の幅に合わせる */
+    height: 100%; /* 親要素(screen)の高さに合わせる */
+}
+

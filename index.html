@@ -10,9 +10,15 @@
     <div class="instrument-container">
         <img src="oscilloscope.png" alt="オシロスコープ">
         <!-- 電源ボタンの領域 -->
-        <div class="hotspot" data-description="電源を入れたり切ったりします。"></div>
+        <div class="hotspot" id="power-button"></div>
         <!-- 説明文表示エリア -->
         <div class="tooltip"></div>
+
+            <!-- オシロスコープの画面領域 -->
+        <div id="screen">
+            <!-- 波形画像（最初は非表示 or 空っぽにしておく） -->
+            <img id="waveform-image" src="" alt="波形">
+        </div>
     </div>
     <script src="script.js"></script>
 </body>
