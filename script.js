@@ -117,7 +117,7 @@ function drawWaveform() {
 function animationLoop() {
     // 電源がONの場合のみ、波形を動かすためにtimeOffsetの値を少しずつ増やす
     if (scopeState.isOn) {
-        scopeState.timeOffset += 0.01;
+        scopeState.timeOffset -= 0.003;
     }
 
     // 現在の状態に基づいて描画を行う
