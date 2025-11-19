@@ -9,17 +9,23 @@
     <h1>オシロスコープ</h1>
     <div class="instrument-container">
         <img src="oscilloscope.png" alt="オシロスコープ">
-        <!-- 電源ボタンの領域 -->
-        <div class="hotspot" id="power-button"></div>
         <!-- 説明文表示エリア -->
         <div class="tooltip"></div>
 
             <!-- オシロスコープの画面領域 -->
         <div id="screen">
             <!-- 波形画像imgの代わりに、描画用のcanvasを設置 -->
-            <canvas id="oscilloscope-screen" width="280" height="120"></canvas>
+            <canvas id="oscilloscope-screen" width="610" height="360"></canvas>
         </div>
+
+    <map name="image-map">
+        <area target="" alt="電源ボタン" title="電源ボタン" href="" coords="134,703,18" shape="circle">
+        <area target="" alt="CH1_MENU" title="CH1_MENU" href="" coords="880,516,835,488" shape="rect">
+        <area target="" alt="CH2_MENU" title="CH2_MENU" href="" coords="968,487,1013,517" shape="rect">
+    </map>
+
     </div>
+
 
 
 

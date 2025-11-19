@@ -3,7 +3,8 @@
 // =======================================================================
 
 // 操作対象となるHTML要素をIDを使って取得します。
-const powerButton = document.querySelector('#power-button');
+//const powerButton = document.querySelector('#power-button');
+
 const canvas = document.querySelector('#oscilloscope-screen');
 
 // canvas要素が見つからない場合は、エラーをコンソールに表示して処理を中断します。
@@ -134,15 +135,22 @@ function animationLoop() {
 // =======================================================================
 
 // 電源ボタンがクリックされたときに実行される処理
-powerButton.addEventListener('click', function() {
-    // 動作確認のため、コンソールにメッセージを出力します。
-    console.log('電源ボタンがクリックされました。');
+// 親要素（コンテナ）にイベントを設定します
+const container = document.querySelector('.instrument-container');
 
-    // ボタンの見た目を変えるために、'active'クラスを付けたり外したりします。
-    powerButton.classList.toggle('active');
+container.addEventListener('click', function(e) {
+    // クリックされた要素(e.target)のIDが 'power-button' かどうかを確認
+    if (e.target.id === 'power-button') {
+        console.log('電源ボタンがクリックされました！');
 
-    // 'active'クラスが付いているかどうかを判定し、scopeStateの電源状態を更新します。
-    scopeState.isOn = powerButton.classList.contains('active');
+        // ここから下は以前の処理と同じです
+        const powerButton = e.target; // targetが電源ボタンそのものです
+        powerButton.classList.toggle('active');
+        scopeState.isOn = powerButton.classList.contains('active');
+        
+        // もしクリック時に処理を追加したい場合はここに書く
+        // animationLoopは常に回っているので、stateを変えるだけでOK
+    }
 });
 
 // 他のボタン（例：電圧スケール変更ボタン）も、ここに追加していきます。
@@ -158,3 +166,84 @@ powerButton.addEventListener('click', function() {
 
 // ページが読み込まれたら、アニメーションループを開始します。
 animationLoop();
+
+// ==================================================
+// 【デバッグ版】マップ変換機能
+// ==================================================
+(function convertMapToHotspots() {
+
+    // 1. 要素の取得チェック
+    const map = document.querySelector('map[name="image-map"]');
+    const container = document.querySelector('.instrument-container');
+
+    // 2. エリアごとの処理
+    const areas = map.querySelectorAll('area');
+
+    areas.forEach((area, index) => {
+        try {
+            const shape = area.getAttribute('shape');
+            const coordsStr = area.getAttribute('coords');
+            
+            if (!coordsStr) {
+                console.warn(`警告: ${index}番目のエリアにcoords属性がありません。スキップします。`);
+                return;
+            }
+
+            const coords = coordsStr.split(',').map(n => parseFloat(n)); // NumberではなくparseFloatでより確実に
+            
+            // title属性がなければalt属性、それもなければ自動名を使う
+            const title = area.getAttribute('title') || area.getAttribute('alt') || `button-${index}`;
+
+            const div = document.createElement('div');
+            div.className = 'hotspot';
+            div.title = title;
+            
+            // ID生成（スペースを除去）
+            const safeTitle = title.replace(/\s+/g, '-');
+            div.id = 'btn-' + safeTitle;
+
+            // スタイル設定
+            div.style.position = 'absolute';
+            div.style.zIndex = '100'; // 念のため大きめに
+            div.style.cursor = 'pointer';
+            div.style.backgroundColor = 'rgba(255, 0, 0, 0.5)'; // 赤く表示して確認
+
+            // 座標計算
+            if (shape === 'rect' && coords.length >= 4) {
+                const [x1, y1, x2, y2] = coords;
+                
+                // ★修正ポイント：Math.minとMath.absを使って、どっち向きにドラッグしても正しく計算する
+                div.style.left = Math.min(x1, x2) + 'px';
+                div.style.top = Math.min(y1, y2) + 'px';
+                div.style.width = Math.abs(x2 - x1) + 'px';
+                div.style.height = Math.abs(y2 - y1) + 'px';
+
+            } else if (shape === 'circle' && coords.length >= 3) {
+                const [x, y, r] = coords;
+                div.style.left = (x - r) + 'px';
+                div.style.top = (y - r) + 'px';
+                div.style.width = (r * 2) + 'px';
+                div.style.height = (r * 2) + 'px';
+                div.style.borderRadius = '50%';           
+            } else {
+                console.warn(`警告: 形状(${shape})または座標データ(${coords})が不正です。`);
+                return;
+            }
+
+            // コンテナに追加
+            container.appendChild(div);
+            console.log(`生成成功: ${div.id} (Top:${div.style.top}, Left:${div.style.left})`);
+
+            // 電源ボタンの連携用ID書き換え
+            if (title.includes('電源') || title.includes('Power')) {
+                div.id = 'power-button';
+                console.log("→ IDを 'power-button' に上書きしました。");
+            }
+
+        } catch (e) {
+            console.error("処理中にエラーが発生しました:", e);
+        }
+    });
+
+    console.log("--- 変換処理完了 ---");
+})();

@@ -5,8 +5,8 @@
 
 #power-button {
     position: absolute;
-    top: 155px;
-    left: 370px;
+    top: 690px;
+    left: 110px;
     width: 40px;
     height: 40px;
     cursor: pointer;
@@ -18,10 +18,10 @@
 
 #screen {
     position: absolute;
-    top: 30px;
-    left: 40px;
-    width: 275px;  /* 画面のサイズに合わせる */
-    height: 120px; /* 画面のサイズに合わせる */
+    top: 283px;
+    left: 85px;
+    width: 610px;  /* 画面のサイズに合わせる */
+    height: 360px; /* 画面のサイズに合わせる */
     background-color: #333; /* 電源OFF時の画面の色 */
 }
 
