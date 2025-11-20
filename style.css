@@ -3,15 +3,14 @@
     width: 500px;
 }
 
-#power-button {
+#電源ボタン {
     position: absolute;
     top: 690px;
     left: 110px;
     width: 40px;
     height: 40px;
     cursor: pointer;
-     z-index: 10; /* 他の要素より手前に表示するための設定 */
-
+    z-index: 10; /* 他の要素より手前に表示するための設定 */
     /* 開発中は、位置を可視化するために背景色を付けておくと非常に便利です */
     background-color: rgba(255, 0, 0, 0.5); 
 }
@@ -34,4 +33,20 @@
 
 #waveform-image.visible {
     display: block; /* ★重要：表示状態に切り替える */
+}
+
+#tooltip {
+    display: none;           /* 最初は非表示 */
+    position: absolute;      /* 自由な位置に動かせるように */
+    background-color: rgba(0, 0, 0, 0.85); /* 背景は半透明の黒 */
+    color: white;            /* 文字は白 */
+    padding: 8px 12px;       /* 文字周りの余白 */
+    border-radius: 4px;      /* 角を丸く */
+    font-size: 14px;         /* 文字サイズ */
+    pointer-events: none;    /* マウスの邪魔をしないように */
+    z-index: 1000;           /* 最前面に表示 */
+    white-space: pre-line;   /* 改行を有効にする */
+    max-width: 500px;        /* 横幅が広がりすぎないように */
+    width: max-content;
+    white-space: pre-wrap;
 }

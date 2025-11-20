@@ -139,8 +139,8 @@ function animationLoop() {
 const container = document.querySelector('.instrument-container');
 
 container.addEventListener('click', function(e) {
-    // クリックされた要素(e.target)のIDが 'power-button' かどうかを確認
-    if (e.target.id === 'power-button') {
+    // クリックされた要素(e.target)のIDが '電源ボタン' かどうかを確認
+    if (e.target.title === '電源ボタン') {
         console.log('電源ボタンがクリックされました！');
 
         // ここから下は以前の処理と同じです
@@ -234,11 +234,6 @@ animationLoop();
             container.appendChild(div);
             console.log(`生成成功: ${div.id} (Top:${div.style.top}, Left:${div.style.left})`);
 
-            // 電源ボタンの連携用ID書き換え
-            if (title.includes('電源') || title.includes('Power')) {
-                div.id = 'power-button';
-                console.log("→ IDを 'power-button' に上書きしました。");
-            }
 
         } catch (e) {
             console.error("処理中にエラーが発生しました:", e);
@@ -247,3 +242,77 @@ animationLoop();
 
     console.log("--- 変換処理完了 ---");
 })();
+
+// ==========================================
+// ボタンの説明文データ（辞書）
+// Image Map Generatorの「Title」と同じ名前にしてください
+// ==========================================
+const descriptions = {
+    "電源ボタン": "電源をオン・オフします。",
+    
+    // --- 画面横 ---
+    "F1": "画面メニューの選択ボタン。\n項目の選択や切り替えに使います。",
+    "F2": "画面メニューの選択ボタン。\n項目の選択や切り替えに使います。",
+    "F3": "画面メニューの選択ボタン。\n項目の選択や切り替えに使います。",
+    "F4": "画面メニューの選択ボタン。\n項目の選択や切り替えに使います。",
+    "F5": "画面メニューの選択ボタン。\n項目の選択や切り替えに使います。",
+    
+    // --- 右上エリア ---
+    "AutoSet": "表示で困ったらこれを押します。\n波形が見やすくなるよう自動設定します。",
+    "RunStop": "波形の動きを止めたり再開したりします。",
+    "SingleSeq": "一度だけ波形を取り込んで止めます。",
+    "SaveRecall": "設定や波形データの保存・呼び出しを行います。",
+    "Measure": "周波数や電圧などの数値を自動計測して表示します。",
+    "Acquire": "波形の取り込み方（平均化など）を設定します。",
+    "Utility": "音や言語など、システム全体の設定を行います。",
+    "Cursor": "画面に線（カーソル）を出して手動計測を行います。",
+    "Display": "画面の明るさや表示方法を変更します。",
+    // --- VERTICAL (縦軸) --
+    "CH1_MENU": "CH1の表示ON/OFFや詳細設定を行います。",
+    "CH2_MENU": "CH2の表示ON/OFFや詳細設定を行います。",
+
+    // --- 入力端子 ---
+    "Ch1": "CH1のプローブを接続する端子です。",
+    "Ch2": "CH2のプローブを接続する端子です。",
+};
+
+
+// ==========================================
+// ツールチップ表示のロジック（調査用ログ付き）
+// ==========================================
+const tooltip = document.getElementById('tooltip');
+
+// 1. マウスがホットスポットに乗った時
+container.addEventListener('mouseover', function(e) {
+
+    if (e.target.classList.contains('hotspot')) {
+        // エリアのタイトルを取得
+        const title = e.target.title;
+
+        // 辞書にそのタイトルがあるか確認
+        if (descriptions[title]) {
+            tooltip.innerText = descriptions[title];
+            tooltip.style.display = 'block';
+        } else {
+            console.log(`【失敗】辞書 descriptions の中に "${title}" というキーが見つかりません。`);
+        }
+    }
+});
+
+container.addEventListener('mousemove', function(e) {
+    if (tooltip.style.display === 'block') {
+        const offsetX = 15;
+        const offsetY = 15;
+        const rect = container.getBoundingClientRect();
+        const x = e.clientX - rect.left + offsetX;
+        const y = e.clientY - rect.top + offsetY;
+        tooltip.style.left = x + 'px';
+        tooltip.style.top = y + 'px';
+    }
+});
+
+container.addEventListener('mouseout', function(e) {
+    if (e.target.classList.contains('hotspot')) {
+        tooltip.style.display = 'none';
+    }
+});
