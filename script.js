@@ -24,7 +24,9 @@ const scopeState = {
     isOn: false,      // 電源がON(true)かOFF(false)か
     voltage: 5.0,     // 電圧スケール (V/div)。波形の振幅に影響します。
     timeScale: 0.1,   // 時間スケール (ms/div)。波形の周波数に影響します。
-    timeOffset: 0     // 波形を時間軸方向にスクロールさせるための値。
+    timeOffset: 0,     // 波形を時間軸方向にスクロールさせるための値。
+    
+    isRunning: true   // trueなら動く、falseなら止まる（初期値はtrue）
 };
 
 
@@ -116,16 +118,15 @@ function drawWaveform() {
  * この関数が約1/60秒ごとに繰り返し実行されることで、アニメーションが実現されます。
  */
 function animationLoop() {
-    // 電源がONの場合のみ、波形を動かすためにtimeOffsetの値を少しずつ増やす
-    if (scopeState.isOn) {
-        scopeState.timeOffset -= 0.003;
+    // 電源がON、かつ、isRunningがtrue（走っている）の時だけ時間を進める
+    if (scopeState.isOn && scopeState.isRunning) {
+        scopeState.timeOffset -= 0.005; // 波を動かす処理
     }
 
-    // 現在の状態に基づいて描画を行う
+    // 描画関数を呼び出す
+    // （止まっていても「静止画」を描画し続ける必要があるので、ここはifの外のまま）
     drawWaveform();
 
-    // ブラウザの次の描画タイミングで、このanimationLoop関数自身を再度呼び出すように予約します。
-    // これにより、滑らかなアニメーションが実現されます。
     requestAnimationFrame(animationLoop);
 }
 
@@ -150,6 +151,19 @@ container.addEventListener('click', function(e) {
         
         // もしクリック時に処理を追加したい場合はここに書く
         // animationLoopは常に回っているので、stateを変えるだけでOK
+        if (scopeState.isOn) { 
+            scopeState.isRunning = true;
+            // RUN/STOPボタンの見た目もリセットする必要があればここでクラス操作
+        }
+    }
+    else if (e.target.title === 'RunStop') {
+        console.log('RUN/STOPボタンがクリックされました！');
+        
+        // 状態を反転させる（trueならfalseに、falseならtrueに）
+        scopeState.isRunning = !scopeState.isRunning;
+
+        // (任意) ボタンが押されている見た目にするなら
+        e.target.classList.toggle('active');
     }
 });
 
