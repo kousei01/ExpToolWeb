@@ -1,266 +1,29 @@
 // =======================================================================
-//  1. 初期設定：HTML要素の取得と描画コンテキストの準備
+//  script.js 完全版
+//  機能: 波形描画、モデル切り替え、ツールチップ表示、マップ自動変換
 // =======================================================================
 
-// 操作対象となるHTML要素をIDを使って取得します。
-//const powerButton = document.querySelector('#power-button');
+// --- 1. グローバル変数と初期設定 ---
 
-const canvas = document.querySelector('#oscilloscope-screen');
+// 現在のアクティブなモデルID（初期値: hantek）
+let currentModelId = 'hantek';
 
-// canvas要素が見つからない場合は、エラーをコンソールに表示して処理を中断します。
-if (!canvas) {
-    console.error('エラー: #oscilloscope-screen というIDを持つcanvas要素が見つかりませんでした。');
-}
+// 現在操作対象のCanvasとツールチップ（初期値: Hantekのもの）
+let canvas = document.querySelector('#canvas-hantek');
+let ctx = canvas.getContext('2d');
+let tooltip = document.querySelector('#tooltip-hantek');
 
-// 2D描画を行うための「コンテキスト」を取得します。これが描画用のツールセットになります。
-const ctx = canvas.getContext('2d');
-
-
-// =======================================================================
-//  2. 状態管理：オシロスコープの現在の設定値を保持するオブジェクト
-// =======================================================================
-
+// オシロスコープの状態管理
 const scopeState = {
-    isOn: false,      // 電源がON(true)かOFF(false)か
-    voltage: 5.0,     // 電圧スケール (V/div)。波形の振幅に影響します。
-    timeScale: 0.1,   // 時間スケール (ms/div)。波形の周波数に影響します。
-    timeOffset: 0,     // 波形を時間軸方向にスクロールさせるための値。
-    
-    isRunning: true   // trueなら動く、falseなら止まる（初期値はtrue）
+    isOn: false,      // 電源の状態 (true: ON, false: OFF)
+    isRunning: true,  // 波形の動き (true: 動く, false: 止まる[STOP])
+    voltage: 5.0,     // 電圧スケール
+    timeScale: 0.1,   // 時間スケール
+    timeOffset: 0     // 波形を動かすためのオフセット値
 };
 
-
-// =======================================================================
-//  3. 描画関数：実際にCanvasに描画を行う部分
-// =======================================================================
-
-/**
- * 背景にグリッド線を描画する関数
- */
-function drawGrid() {
-    ctx.strokeStyle = 'rgba(0, 255, 0, 0.2)'; // グリッド線の色（半透明の緑）
-    ctx.lineWidth = 1; // グリッド線の太さ
-
-    const gridSpacing = 50; // グリッド線の間隔 (ピクセル)
-
-    // 垂直線を描画
-    for (let x = 0; x < canvas.width; x += gridSpacing) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, canvas.height);
-        ctx.stroke();
-    }
-
-    // 水平線を描画
-    for (let y = 0; y < canvas.height; y += gridSpacing) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(canvas.width, y);
-        ctx.stroke();
-    }
-}
-
-/**
- * 現在のscopeStateに基づいて波形（サイン波）を描画する関数
- */
-function drawWaveform() {
-    // 1. 画面をクリア
-    // 前回のフレームで描画した内容をすべて消去します。
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // 2. 背景グリッドを描画
-    drawGrid();
-
-    // 3. 電源がOFFの場合は、ここで描画処理を終了します。
-    if (!scopeState.isOn) {
-        return;
-    }
-
-    // 4. 波形を描画する準備
-    ctx.beginPath(); // これから新しい線を描き始めるという合図
-    ctx.strokeStyle = 'lime'; // 波形の色（明るい緑）
-    ctx.lineWidth = 2; // 波形の線の太さ
-
-    const centerY = canvas.height / 2; // 画面の縦方向の中心Y座標
-    const amplitude = (canvas.height / 2) * (scopeState.voltage / 5.0); // 振幅を計算
-
-    // 5. 波形の座標を計算して線を結んでいく
-    // canvasの左端(x=0)から右端まで、1ピクセルずつ点を計算します。
-    for (let x = 0; x < canvas.width; x++) {
-        // 現在のxピクセル位置を「時間」に変換します。timeScaleが影響します。
-        const time = (x / canvas.width) * (scopeState.timeScale * 10);
-
-        // サイン波のY座標を計算します。
-        // Math.sin()を使って周期的な値を生成し、振幅(amplitude)を掛け合わせます。
-        // timeOffsetを加えることで、時間経過と共に波が動きます。
-        const y = centerY - Math.sin((time + scopeState.timeOffset) * 20) * amplitude;
-
-        // 最初の点の場合はペンを移動させ、それ以降は線を引いていきます。
-        if (x === 0) {
-            ctx.moveTo(x, y);
-        } else {
-            ctx.lineTo(x, y);
-        }
-    }
-
-    // 6. 描画の確定
-    // ここまでlineToで繋いできた線情報を、実際に画面に描画します。
-    ctx.stroke();
-}
-
-
-// =======================================================================
-//  4. アニメーション：描画を繰り返し行うためのループ
-// =======================================================================
-
-/**
- * アニメーションのメインループ関数
- * この関数が約1/60秒ごとに繰り返し実行されることで、アニメーションが実現されます。
- */
-function animationLoop() {
-    // 電源がON、かつ、isRunningがtrue（走っている）の時だけ時間を進める
-    if (scopeState.isOn && scopeState.isRunning) {
-        scopeState.timeOffset -= 0.005; // 波を動かす処理
-    }
-
-    // 描画関数を呼び出す
-    // （止まっていても「静止画」を描画し続ける必要があるので、ここはifの外のまま）
-    drawWaveform();
-
-    requestAnimationFrame(animationLoop);
-}
-
-
-// =======================================================================
-//  5. イベントリスナー：ユーザーの操作を検知する部分
-// =======================================================================
-
-// 電源ボタンがクリックされたときに実行される処理
-// 親要素（コンテナ）にイベントを設定します
-const container = document.querySelector('.instrument-container');
-
-container.addEventListener('click', function(e) {
-    // クリックされた要素(e.target)のIDが '電源ボタン' かどうかを確認
-    if (e.target.title === '電源ボタン') {
-        console.log('電源ボタンがクリックされました！');
-
-        // ここから下は以前の処理と同じです
-        const powerButton = e.target; // targetが電源ボタンそのものです
-        powerButton.classList.toggle('active');
-        scopeState.isOn = powerButton.classList.contains('active');
-        
-        // もしクリック時に処理を追加したい場合はここに書く
-        // animationLoopは常に回っているので、stateを変えるだけでOK
-        if (scopeState.isOn) { 
-            scopeState.isRunning = true;
-            // RUN/STOPボタンの見た目もリセットする必要があればここでクラス操作
-        }
-    }
-    else if (e.target.title === 'RunStop') {
-        console.log('RUN/STOPボタンがクリックされました！');
-        
-        // 状態を反転させる（trueならfalseに、falseならtrueに）
-        scopeState.isRunning = !scopeState.isRunning;
-
-        // (任意) ボタンが押されている見た目にするなら
-        e.target.classList.toggle('active');
-    }
-});
-
-// 他のボタン（例：電圧スケール変更ボタン）も、ここに追加していきます。
-// const voltageUpButton = document.querySelector('#voltage-up-button');
-// voltageUpButton.addEventListener('click', function() {
-//     scopeState.voltage += 0.5;
-// });
-
-
-// =======================================================================
-//  6. アプリケーションの開始
-// =======================================================================
-
-// ページが読み込まれたら、アニメーションループを開始します。
-animationLoop();
-
-// ==================================================
-// 【デバッグ版】マップ変換機能
-// ==================================================
-(function convertMapToHotspots() {
-
-    // 1. 要素の取得チェック
-    const map = document.querySelector('map[name="image-map"]');
-    const container = document.querySelector('.instrument-container');
-
-    // 2. エリアごとの処理
-    const areas = map.querySelectorAll('area');
-
-    areas.forEach((area, index) => {
-        try {
-            const shape = area.getAttribute('shape');
-            const coordsStr = area.getAttribute('coords');
-            
-            if (!coordsStr) {
-                console.warn(`警告: ${index}番目のエリアにcoords属性がありません。スキップします。`);
-                return;
-            }
-
-            const coords = coordsStr.split(',').map(n => parseFloat(n)); // NumberではなくparseFloatでより確実に
-            
-            // title属性がなければalt属性、それもなければ自動名を使う
-            const title = area.getAttribute('title') || area.getAttribute('alt') || `button-${index}`;
-
-            const div = document.createElement('div');
-            div.className = 'hotspot';
-            div.title = title;
-            
-            // ID生成（スペースを除去）
-            const safeTitle = title.replace(/\s+/g, '-');
-            div.id = 'btn-' + safeTitle;
-
-            // スタイル設定
-            div.style.position = 'absolute';
-            div.style.zIndex = '100'; // 念のため大きめに
-            div.style.cursor = 'pointer';
-            div.style.backgroundColor = 'rgba(255, 0, 0, 0.5)'; // 赤く表示して確認
-
-            // 座標計算
-            if (shape === 'rect' && coords.length >= 4) {
-                const [x1, y1, x2, y2] = coords;
-                
-                // ★修正ポイント：Math.minとMath.absを使って、どっち向きにドラッグしても正しく計算する
-                div.style.left = Math.min(x1, x2) + 'px';
-                div.style.top = Math.min(y1, y2) + 'px';
-                div.style.width = Math.abs(x2 - x1) + 'px';
-                div.style.height = Math.abs(y2 - y1) + 'px';
-
-            } else if (shape === 'circle' && coords.length >= 3) {
-                const [x, y, r] = coords;
-                div.style.left = (x - r) + 'px';
-                div.style.top = (y - r) + 'px';
-                div.style.width = (r * 2) + 'px';
-                div.style.height = (r * 2) + 'px';
-                div.style.borderRadius = '50%';           
-            } else {
-                console.warn(`警告: 形状(${shape})または座標データ(${coords})が不正です。`);
-                return;
-            }
-
-            // コンテナに追加
-            container.appendChild(div);
-            console.log(`生成成功: ${div.id} (Top:${div.style.top}, Left:${div.style.left})`);
-
-
-        } catch (e) {
-            console.error("処理中にエラーが発生しました:", e);
-        }
-    });
-
-    console.log("--- 変換処理完了 ---");
-})();
-
-// ==========================================
-// ボタンの説明文データ（辞書）
-// Image Map Generatorの「Title」と同じ名前にしてください
-// ==========================================
+// --- 2. ボタンの説明文データ（辞書） ---
+// Image Map Generatorの「Title」と一致させてください
 const descriptions = {
     "電源ボタン": "電源をオン・オフします。",
     
@@ -274,7 +37,7 @@ const descriptions = {
     // --- 右上エリア ---
     "AutoSet": "表示で困ったらこれを押します。\n波形が見やすくなるよう自動設定します。",
     "RunStop": "波形の動きを止めたり再開したりします。",
-    "SingleSeq": "一度だけ波形を取り込んで止めます。",
+    "Single": "一度だけ波形を取り込んで止めます。",
     "SaveRecall": "設定や波形データの保存・呼び出しを行います。",
     "Measure": "周波数や電圧などの数値を自動計測して表示します。",
     "Acquire": "波形の取り込み方（平均化など）を設定します。",
@@ -284,6 +47,9 @@ const descriptions = {
     // --- VERTICAL (縦軸) --
     "CH1_MENU": "CH1の表示ON/OFFや詳細設定を行います。",
     "CH2_MENU": "CH2の表示ON/OFFや詳細設定を行います。",
+    "CH3_MENU": "CH3の表示ON/OFFや詳細設定を行います。",
+    "CH4_MENU": "CH4の表示ON/OFFや詳細設定を行います。",
+
 
     // --- 入力端子 ---
     "Ch1": "CH1のプローブを接続する端子です。",
@@ -291,42 +57,332 @@ const descriptions = {
 };
 
 
+// =======================================================================
+//  3. モデル切り替え機能
+// =======================================================================
+function changeModel(modelName) {
+    console.log('モデル切り替え:', modelName);
+    currentModelId = modelName;
+
+    // 1. 全てのモデルコンテナを非表示にする
+    const allModels = document.querySelectorAll('.instrument-container');
+    allModels.forEach(el => el.style.display = 'none');
+
+    // 2. 選択されたモデルだけ表示する
+    const activeContainer = document.getElementById('model-' + modelName);
+    if (activeContainer) {
+        activeContainer.style.display = 'block';
+        
+        // 3. 描画先(Canvas)とツールチップの変数を更新する
+        canvas = document.getElementById('canvas-' + modelName);
+        ctx = canvas.getContext('2d');
+        tooltip = document.getElementById('tooltip-' + modelName);
+    } else {
+        console.error('指定されたモデルIDが見つかりません: model-' + modelName);
+    }
+}
+
+// script.js
+
+// --- ズーム管理用の変数 ---
+let currentZoom = 100; // 初期値 100%
+
 // ==========================================
-// ツールチップ表示のロジック（調査用ログ付き）
+// ズーム変更機能
 // ==========================================
-const tooltip = document.getElementById('tooltip');
+// script.js の changeZoom 関数を修正
 
-// 1. マウスがホットスポットに乗った時
-container.addEventListener('mouseover', function(e) {
+function changeZoom(amount) {
+    // 1. ズーム値を計算 (そのまま)
+    currentZoom += amount;
+    if (currentZoom < 20) currentZoom = 20;
+    if (currentZoom > 200) currentZoom = 200;
 
-    if (e.target.classList.contains('hotspot')) {
-        // エリアのタイトルを取得
-        const title = e.target.title;
+    // 2. 画面のパーセント表示を更新 (そのまま)
+    document.getElementById('zoom-display').innerText = currentZoom + '%';
 
-        // 辞書にそのタイトルがあるか確認
-        if (descriptions[title]) {
-            tooltip.innerText = descriptions[title];
-            tooltip.style.display = 'block';
+    // 3. 全てのモデルコンテナに対して拡大縮小を適用
+    const containers = document.querySelectorAll('.instrument-container');
+    containers.forEach(container => {
+        container.style.transform = `scale(${currentZoom / 100})`;
+    });
+}
+
+
+// =======================================================================
+//  4. 描画・アニメーションロジック
+// =======================================================================
+
+// 背景グリッドを描画する関数
+function drawGrid() {
+    ctx.strokeStyle = 'rgba(0, 255, 0, 0.2)'; // 薄い緑色
+    ctx.lineWidth = 1;
+    const gridSpacing = 50;
+
+    // 縦線
+    for (let x = 0; x < canvas.width; x += gridSpacing) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+    }
+    // 横線
+    for (let y = 0; y < canvas.height; y += gridSpacing) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+    }
+}
+
+// 波形を描画する関数
+function drawWaveform() {
+    // 画面をクリア
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // 背景を描画
+    drawGrid();
+
+    // 電源がOFFなら波形は描かない
+    if (!scopeState.isOn) {
+        return;
+    }
+
+    // 波形の設定
+    ctx.beginPath();
+    ctx.strokeStyle = 'lime'; // 明るい緑
+    ctx.lineWidth = 2;
+
+    const centerY = canvas.height / 2;
+    const amplitude = (canvas.height / 2) * (scopeState.voltage / 5.0);
+
+    // 左から右へ波を描く
+    for (let x = 0; x < canvas.width; x++) {
+        // 時間軸の計算
+        const time = (x / canvas.width) * (scopeState.timeScale * 10);
+        
+        // サイン波の計算 (timeOffsetで波を動かす)
+        const y = centerY - Math.sin((time + scopeState.timeOffset) * 20) * amplitude;
+
+        if (x === 0) {
+            ctx.moveTo(x, y);
         } else {
-            console.log(`【失敗】辞書 descriptions の中に "${title}" というキーが見つかりません。`);
+            ctx.lineTo(x, y);
         }
     }
+    ctx.stroke();
+}
+
+// アニメーションループ
+function animationLoop() {
+    // 電源ON かつ RUN状態のときだけ時間を進める
+    if (scopeState.isOn && scopeState.isRunning) {
+        // -= にすることで波形を左から右へ流す
+        scopeState.timeOffset -= 0.005; 
+    }
+
+    // 描画実行
+    if (canvas && ctx) {
+        drawWaveform();
+    }
+
+    // 次のフレームを予約
+    requestAnimationFrame(animationLoop);
+}
+
+
+// =======================================================================
+//  5. イベントリスナー (全てのモデルに対して設定)
+// =======================================================================
+
+// ページ内のすべてのオシロスコープコンテナを取得
+const containers = document.querySelectorAll('.instrument-container');
+
+containers.forEach(container => {
+    
+    // --- クリックイベント (ボタン操作) ---
+    container.addEventListener('click', function(e) {
+        // 表示されていないモデルでのクリックは無視
+        if (container.style.display === 'none') return;
+
+        // ホットスポットがクリックされた場合
+        if (e.target.classList.contains('hotspot')) {
+            const title = e.target.title;
+
+            // [A] 電源ボタンの処理
+            if (title === '電源ボタン') {
+                console.log('電源操作');
+                const btn = e.target;
+                btn.classList.toggle('active');
+                
+                // 電源状態を更新
+                scopeState.isOn = btn.classList.contains('active');
+                
+                // 電源を入れたらRUN状態にする
+                if (scopeState.isOn) {
+                    scopeState.isRunning = true;
+                }
+            }
+            // [B] RUN/STOPボタンの処理
+            else if (title === 'RunStop') {
+                console.log('RUN/STOP操作');
+                scopeState.isRunning = !scopeState.isRunning;
+                // 必要に応じてボタンの見た目を変えるなら toggle('active') など
+            }
+        }
+    });
+
+    // --- マウスオーバー (ツールチップ表示) ---
+    container.addEventListener('mouseover', function(e) {
+        if (e.target.classList.contains('hotspot')) {
+            const title = e.target.title;
+            // 辞書に説明文があれば表示
+            if (descriptions[title] && tooltip) {
+                tooltip.innerText = descriptions[title];
+                tooltip.style.display = 'block';
+            }
+        }
+    });
+
+// --- マウス移動 (ツールチップ追従) ---
+    container.addEventListener('mousemove', function(e) {
+        if (tooltip && tooltip.style.display === 'block') {
+            
+            const x = e.pageX + 15; // マウスから右に15px
+            const y = e.pageY + 15; // マウスから下に15px
+            
+            tooltip.style.left = x + 'px';
+            tooltip.style.top = y + 'px';
+        }
+    });
+    // --- マウスアウト (ツールチップ非表示) ---
+    container.addEventListener('mouseout', function(e) {
+        if (e.target.classList.contains('hotspot') && tooltip) {
+            tooltip.style.display = 'none';
+        }
+    });
 });
 
-container.addEventListener('mousemove', function(e) {
-    if (tooltip.style.display === 'block') {
-        const offsetX = 15;
-        const offsetY = 15;
-        const rect = container.getBoundingClientRect();
-        const x = e.clientX - rect.left + offsetX;
-        const y = e.clientY - rect.top + offsetY;
-        tooltip.style.left = x + 'px';
-        tooltip.style.top = y + 'px';
-    }
-});
 
-container.addEventListener('mouseout', function(e) {
-    if (e.target.classList.contains('hotspot')) {
-        tooltip.style.display = 'none';
-    }
-});
+// =======================================================================
+//  6. マップ変換機能 (エリア定義を透明なボタンdivに変換)
+// =======================================================================
+(function convertMapToHotspots() {
+    console.log("--- マップ変換処理を開始します ---");
+
+    // ページ内のすべての <map> タグを処理
+    const maps = document.querySelectorAll('map');
+
+    maps.forEach(map => {
+        const mapName = map.name; // 例: map-hantek
+        
+        // マップ名から対応するコンテナIDを推測 (map-hantek -> model-hantek)
+        const containerId = mapName.replace('map-', 'model-');
+        const targetContainer = document.getElementById(containerId);
+
+        if (!targetContainer) {
+            console.warn(`マップ ${mapName} に対応するコンテナ ${containerId} が見つかりません。`);
+            return;
+        }
+
+        const areas = map.querySelectorAll('area');
+
+        areas.forEach((area, index) => {
+            try {
+                const shape = area.getAttribute('shape');
+                const coordsStr = area.getAttribute('coords');
+                
+                if (!coordsStr) return;
+
+                const coords = coordsStr.split(',').map(n => parseFloat(n));
+                
+                // タイトル取得
+                const title = area.getAttribute('title') || area.getAttribute('alt') || `button-${index}`;
+
+                // div要素作成
+                const div = document.createElement('div');
+                div.className = 'hotspot';
+                div.title = title;
+                
+                // ID生成 (スペースをハイフンに)
+                div.id = 'btn-' + title.replace(/\s+/g, '-');
+                // ※電源ボタンのID強制変換は不要（クリックイベントでtitle判定しているため）
+
+                // スタイル設定
+                div.style.position = 'absolute';
+                div.style.zIndex = '100'; // Canvasより手前に
+                div.style.cursor = 'pointer';
+                // 開発用：赤く表示 (完成したら transparent に変更してください)
+                div.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
+
+                // --- 形状ごとの座標計算 ---
+                // 四角形 (Rect)
+                if (shape === 'rect' && coords.length >= 4) {
+                    const [x1, y1, x2, y2] = coords;
+                    div.style.left = Math.min(x1, x2) + 'px';
+                    div.style.top = Math.min(y1, y2) + 'px';
+                    div.style.width = Math.abs(x2 - x1) + 'px';
+                    div.style.height = Math.abs(y2 - y1) + 'px';
+                }
+                // 円形 (Circle)
+                else if (shape === 'circle' && coords.length >= 3) {
+                    const [x, y, r] = coords;
+                    div.style.left = (x - r) + 'px';
+                    div.style.top = (y - r) + 'px';
+                    div.style.width = (r * 2) + 'px';
+                    div.style.height = (r * 2) + 'px';
+                    div.style.borderRadius = '50%';
+                }
+                // 多角形 (Poly) - 必要時のための実装
+                else if (shape === 'poly' && coords.length >= 2) {
+                    // 簡易的なバウンディングボックス計算
+                    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                    for (let i = 0; i < coords.length; i += 2) {
+                        const x = coords[i];
+                        const y = coords[i+1];
+                        if (x < minX) minX = x;
+                        if (x > maxX) maxX = x;
+                        if (y < minY) minY = y;
+                        if (y > maxY) maxY = y;
+                    }
+                    div.style.left = minX + 'px';
+                    div.style.top = minY + 'px';
+                    div.style.width = (maxX - minX) + 'px';
+                    div.style.height = (maxY - minY) + 'px';
+                }
+
+                // コンテナに追加
+                targetContainer.appendChild(div);
+
+            } catch (e) {
+                console.error("エリア変換エラー:", e);
+            }
+        });
+    });
+    console.log("--- マップ変換処理完了 ---");
+})();
+
+
+// ==========================================
+// UI連動型のモデル切り替え関数
+// ==========================================
+function switchModelUI(modelName) {
+    // 1. 本来のモデル切り替え処理を実行
+    changeModel(modelName);
+
+    // 2. ボタンの見た目を更新（青く光らせる）
+    // 一旦両方の active クラスを外す
+    document.getElementById('btn-model-hantek').classList.remove('active');
+    document.getElementById('btn-model-agilent').classList.remove('active');
+
+    // 選ばれた方だけに active クラスを付ける
+    document.getElementById('btn-model-' + modelName).classList.add('active');
+}
+
+
+
+// =======================================================================
+//  7. アプリケーション開始
+// =======================================================================
+// アニメーションループを開始
+animationLoop();

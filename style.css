@@ -1,52 +1,195 @@
+body {
+    /* ページ内の要素を縦に並べる */
+    display: flex;
+    flex-direction: column;
+    
+    /* 横方向の中央揃え */
+    align-items: center;
+    
+    /* 余白と背景色の調整 */
+    margin: 0;
+    padding: 20px 0;
+    min-height: 100vh; /* 画面の高さいっぱいを使う */
+    background-color: #eaeff2; /* 薄いグレー（実験室っぽい色） */
+}
+
+.main-stage {
+    width: 100%;             /* 画面の横幅いっぱいを使う */
+    display: flex;           /* Flexboxを使う */
+    justify-content: center; /* 中身を強制的に中央揃えにする */
+    
+    /* 拡大した時に横スクロールバーが出ないようにする（お好みで auto にしてもOK） */
+    overflow-x: clip; 
+    
+    /* 下に少し余白を持たせる */
+    padding-bottom: 50px;
+}
+
+
 .instrument-container {
-    position: relative; /* 子要素の位置の基準にする */
-    width: 500px;
+    position: relative;
+    display: block; 
+    
+    /* margin: 0 auto; は親の justify-content: center が効くので削除または無効化 */
+    margin: 0; 
+
+    /* ズームの基準点を「上・中央」に固定（最重要） */
+    transform-origin: top center;
+    transition: transform 0.2s ease;
+
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
 }
 
-#電源ボタン {
+.screen-area {
     position: absolute;
-    top: 690px;
-    left: 110px;
-    width: 40px;
-    height: 40px;
-    cursor: pointer;
-    z-index: 10; /* 他の要素より手前に表示するための設定 */
-    /* 開発中は、位置を可視化するために背景色を付けておくと非常に便利です */
-    background-color: rgba(255, 0, 0, 0.5); 
+    /* 位置は個別に指定するのでここでは書かない */
 }
 
-#screen {
+/* ツールチップの共通設定 */
+.tooltip {
+    display: none;
     position: absolute;
-    top: 283px;
-    left: 85px;
-    width: 610px;  /* 画面のサイズに合わせる */
-    height: 360px; /* 画面のサイズに合わせる */
-    background-color: #333; /* 電源OFF時の画面の色 */
-}
-
-/* 波形画像のスタイル */
-#waveform-image {
-    width: 100%;  /* 親要素(screen)の幅に合わせる */
-    height: 100%; /* 親要素(screen)の高さに合わせる */
-    display: none; /* 初期状態では非表示 */
-}
-
-#waveform-image.visible {
-    display: block; /* ★重要：表示状態に切り替える */
-}
-
-#tooltip {
-    display: none;           /* 最初は非表示 */
-    position: absolute;      /* 自由な位置に動かせるように */
-    background-color: rgba(0, 0, 0, 0.85); /* 背景は半透明の黒 */
-    color: white;            /* 文字は白 */
-    padding: 8px 12px;       /* 文字周りの余白 */
-    border-radius: 4px;      /* 角を丸く */
-    font-size: 14px;         /* 文字サイズ */
-    pointer-events: none;    /* マウスの邪魔をしないように */
-    z-index: 1000;           /* 最前面に表示 */
-    white-space: pre-line;   /* 改行を有効にする */
-    max-width: 500px;        /* 横幅が広がりすぎないように */
+    background-color: rgba(0, 0, 0, 0.85);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+    pointer-events: none;
+    z-index: 1000;
+    max-width: 500px;
     width: max-content;
     white-space: pre-wrap;
+}
+
+/* ホットスポット（自動生成されるボタン） */
+.hotspot {
+    position: absolute;
+    z-index: 100;
+    cursor: pointer;
+    background-color: rgba(255, 0, 0, 0.3); /* テスト用：赤色 */
+}
+
+/* --- 個別の位置調整 --- */
+
+/* Hantek用の画面位置 */
+#screen-hantek {
+    top: 283px;    /* 画像に合わせて調整 */
+    left: 85px;
+}
+
+/* Agilent用の画面位置 */
+#screen-agilent {
+    top: 167px;    /* 画像に合わせて調整 */
+    left: 193px;
+}
+
+/* --- コントロールパネル全体 --- */
+.control-panel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    
+    background-color: #2c3e50; /* 濃いネイビーグレー */
+    padding: 15px 25px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2); /* 影をつけて浮き上がらせる */
+    color: white;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    
+    margin: 20px auto;
+    width: max-content; /* 中身に合わせて幅を調整 */
+}
+
+/* 各グループのまとまり */
+.control-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+}
+
+/* ラベル文字 (MODEL SELECT など) */
+.panel-label {
+    font-size: 10px;
+    letter-spacing: 1px;
+    color: #95a5a6; /* 薄いグレー */
+    font-weight: bold;
+}
+
+/* --- ボタンのデザイン --- */
+.panel-btn {
+    background-color: #34495e;
+    color: white;
+    border: 1px solid #46637f;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+/* ボタンにマウスが乗った時 */
+.panel-btn:hover {
+    background-color: #415b76;
+    transform: translateY(-1px); /* 少し浮く */
+}
+
+/* ボタンが押されている時 (Active状態) */
+.panel-btn:active {
+    transform: translateY(1px); /* 沈む */
+}
+
+/* 選択中のモデルボタンを目立たせる */
+.panel-btn.active {
+    background-color: #3498db; /* 鮮やかな青 */
+    border-color: #3498db;
+    font-weight: bold;
+    box-shadow: 0 0 10px rgba(52, 152, 219, 0.4); /* 青く光る */
+}
+
+/* + - ボタンを少し大きく */
+.icon-btn {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 18px;
+}
+
+/* --- ズーム表示画面 (デジタル液晶風) --- */
+.zoom-display-screen {
+    background-color: #000;
+    padding: 8px 12px;
+    border-radius: 4px;
+    border: 1px solid #555;
+    min-width: 60px;
+    text-align: center;
+    box-shadow: inset 0 0 5px rgba(0,0,0,0.8); /* 内側に影 */
+}
+
+#zoom-display {
+    color: #2ecc71; /* 蛍光グリーン */
+    font-family: 'Courier New', monospace; /* 等幅フォント */
+    font-weight: bold;
+    font-size: 16px;
+}
+
+/* --- 区切り線 --- */
+.panel-divider {
+    width: 1px;
+    height: 40px;
+    background-color: #46637f;
+    margin: 0 10px;
+}
+
+/* --- レイアウト調整 --- */
+.button-group, .zoom-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
 }
