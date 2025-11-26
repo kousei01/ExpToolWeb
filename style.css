@@ -18,8 +18,7 @@ body {
     display: flex;           /* Flexboxを使う */
     justify-content: center; /* 中身を強制的に中央揃えにする */
     
-    /* 拡大した時に横スクロールバーが出ないようにする（お好みで auto にしてもOK） */
-    overflow-x: clip; 
+    overflow-x: auto; 
     
     /* 下に少し余白を持たせる */
     padding-bottom: 50px;

@@ -1,388 +1,393 @@
 // =======================================================================
-//  script.js 完全版
-//  機能: 波形描画、モデル切り替え、ツールチップ表示、マップ自動変換
+//  script.js (メニュー表示・電源連動対応版)
 // =======================================================================
 
 // --- 1. グローバル変数と初期設定 ---
 
-// 現在のアクティブなモデルID（初期値: hantek）
 let currentModelId = 'hantek';
-
-// 現在操作対象のCanvasとツールチップ（初期値: Hantekのもの）
 let canvas = document.querySelector('#canvas-hantek');
 let ctx = canvas.getContext('2d');
 let tooltip = document.querySelector('#tooltip-hantek');
 
 // オシロスコープの状態管理
 const scopeState = {
-    isOn: false,      // 電源の状態 (true: ON, false: OFF)
-    isRunning: true,  // 波形の動き (true: 動く, false: 止まる[STOP])
+    isOn: false,      // 電源の状態
+    isRunning: true,  // 波形の動き
     voltage: 5.0,     // 電圧スケール
     timeScale: 0.1,   // 時間スケール
-    timeOffset: 0     // 波形を動かすためのオフセット値
+    timeOffset: 0,    // 波形オフセット
+    currentMenu: null // ★追加: 現在表示中のメニューキー
 };
 
-// --- 2. ボタンの説明文データ（辞書） ---
-// Image Map Generatorの「Title」と一致させてください
+// --- ★追加: メニューの内容データ ---
+const menuData = {
+    "CH1_MENU": {
+        title: "CH1 SETTING",
+        items: ["Coupling: DC", "BW Limit: Off", "Probe: 1X", "Invert: Off", "Volts/Div: Coarse"]
+    },
+    "CH2_MENU": {
+        title: "CH2 SETTING",
+        items: ["Coupling: AC", "BW Limit: On", "Probe: 10X", "Invert: Off", "Volts/Div: Fine"]
+    },
+    "Measure": {
+        title: "MEASURE",
+        items: ["Source: CH1", "Type: Vpp", "Type: Freq", "Type: Period", "Clear: All"]
+    },
+    // 必要なら他のボタンもここに追加
+    "Acquire": {
+        title: "ACQUIRE",
+        items: ["Mode: Sample", "Peak Detect", "Average", "Depth: Normal"]
+    }
+};
+
+// --- 2. ボタンの説明文データ ---
 const descriptions = {
     "電源ボタン": "電源をオン・オフします。",
-    
-    // --- 画面横 ---
-    "F1": "画面メニューの選択ボタン。\n項目の選択や切り替えに使います。",
-    "F2": "画面メニューの選択ボタン。\n項目の選択や切り替えに使います。",
-    "F3": "画面メニューの選択ボタン。\n項目の選択や切り替えに使います。",
-    "F4": "画面メニューの選択ボタン。\n項目の選択や切り替えに使います。",
-    "F5": "画面メニューの選択ボタン。\n項目の選択や切り替えに使います。",
-    
-    // --- 右上エリア ---
-    "AutoSet": "表示で困ったらこれを押します。\n波形が見やすくなるよう自動設定します。",
+    "F1": "画面メニューの選択ボタン。",
+    "F2": "画面メニューの選択ボタン。",
+    "F3": "画面メニューの選択ボタン。",
+    "F4": "画面メニューの選択ボタン。",
+    "F5": "画面メニューの選択ボタン。",
+    "AutoSet": "波形が見やすくなるよう自動設定します。",
     "RunStop": "波形の動きを止めたり再開したりします。",
     "Single": "一度だけ波形を取り込んで止めます。",
     "SaveRecall": "設定や波形データの保存・呼び出しを行います。",
-    "Measure": "周波数や電圧などの数値を自動計測して表示します。",
-    "Acquire": "波形の取り込み方（平均化など）を設定します。",
-    "Utility": "音や言語など、システム全体の設定を行います。",
-    "Cursor": "画面に線（カーソル）を出して手動計測を行います。",
-    "Display": "画面の明るさや表示方法を変更します。",
-    // --- VERTICAL (縦軸) --
-    "CH1_MENU": "CH1の表示ON/OFFや詳細設定を行います。",
-    "CH2_MENU": "CH2の表示ON/OFFや詳細設定を行います。",
-    "CH3_MENU": "CH3の表示ON/OFFや詳細設定を行います。",
-    "CH4_MENU": "CH4の表示ON/OFFや詳細設定を行います。",
-
-
-    // --- 入力端子 ---
-    "Ch1": "CH1のプローブを接続する端子です。",
-    "Ch2": "CH2のプローブを接続する端子です。",
+    "Measure": "数値を自動計測して表示します。",
+    "Acquire": "波形の取り込み方を設定します。",
+    "Utility": "システム設定を行います。",
+    "Cursor": "手動計測を行います。",
+    "Display": "表示方法を変更します。",
+    "CH1_MENU": "CH1の詳細設定を行います。",
+    "CH2_MENU": "CH2の詳細設定を行います。",
+    "CH3_MENU": "CH3の詳細設定を行います。",
+    "CH4_MENU": "CH4の詳細設定を行います。",
+    "Ch1": "CH1入力端子。",
+    "Ch2": "CH2入力端子。"
 };
 
-
-// =======================================================================
-//  3. モデル切り替え機能
-// =======================================================================
+// --- 3. モデル切り替え機能 ---
 function changeModel(modelName) {
     console.log('モデル切り替え:', modelName);
     currentModelId = modelName;
 
-    // 1. 全てのモデルコンテナを非表示にする
     const allModels = document.querySelectorAll('.instrument-container');
     allModels.forEach(el => el.style.display = 'none');
 
-    // 2. 選択されたモデルだけ表示する
     const activeContainer = document.getElementById('model-' + modelName);
     if (activeContainer) {
         activeContainer.style.display = 'block';
-        
-        // 3. 描画先(Canvas)とツールチップの変数を更新する
         canvas = document.getElementById('canvas-' + modelName);
         ctx = canvas.getContext('2d');
         tooltip = document.getElementById('tooltip-' + modelName);
-    } else {
-        console.error('指定されたモデルIDが見つかりません: model-' + modelName);
+        autoFit();
     }
 }
 
-// script.js
+// ズーム関連
+let currentZoom = 100;
+function setZoom(newZoom) {
+    // 範囲制限 (20% ~ 400%くらいまで拡大できるように上限を上げる)
+    if (newZoom < 20) newZoom = 20;
+    if (newZoom > 400) newZoom = 400; // 上限を増やしました
 
-// --- ズーム管理用の変数 ---
-let currentZoom = 100; // 初期値 100%
+    currentZoom = Math.floor(newZoom);
+    const scale = currentZoom / 100;
 
-// ==========================================
-// ズーム変更機能
-// ==========================================
-// script.js の changeZoom 関数を修正
+    // 画面のパーセント表示を更新
+    const zoomDisplay = document.getElementById('zoom-display');
+    if (zoomDisplay) {
+        zoomDisplay.innerText = currentZoom + '%';
+    }
 
-function changeZoom(amount) {
-    // 1. ズーム値を計算 (そのまま)
-    currentZoom += amount;
-    if (currentZoom < 20) currentZoom = 20;
-    if (currentZoom > 200) currentZoom = 200;
-
-    // 2. 画面のパーセント表示を更新 (そのまま)
-    document.getElementById('zoom-display').innerText = currentZoom + '%';
-
-    // 3. 全てのモデルコンテナに対して拡大縮小を適用
+    // コンテナの取得
     const containers = document.querySelectorAll('.instrument-container');
+    const stage = document.querySelector('.main-stage');
+
     containers.forEach(container => {
-        container.style.transform = `scale(${currentZoom / 100})`;
+        // 1. 変形を適用
+        container.style.transform = `scale(${scale})`;
+        
+        // 2. 拡大した分のスペース確保（スクロールバーを出すため）
+        // transform: scale は元の領域サイズしか確保しないため、
+        // 拡大した分のはみ出し量を margin で押し広げる
+        
+        const rect = container.getBoundingClientRect(); // 現在の見た目のサイズ
+        const originalHeight = container.offsetHeight;
+        const originalWidth = container.offsetWidth;
+
+        // 縦方向: 下に伸びた分だけ margin-bottom を追加
+        // transform-origin: top center なので下方向への伸びは (scale - 1) * height
+        if (scale > 1) {
+            const verticalOverflow = originalHeight * (scale - 1);
+            container.style.marginBottom = verticalOverflow + "px";
+            
+            // 横方向: 左右に広がった分、margin-left/right を追加して重なり防止
+            const horizontalOverflow = (originalWidth * (scale - 1)) / 2;
+            container.style.marginLeft = horizontalOverflow + "px";
+            container.style.marginRight = horizontalOverflow + "px";
+        } else {
+            container.style.marginBottom = "0px";
+            container.style.marginLeft = "0px";
+            container.style.marginRight = "0px";
+        }
+    });
+
+    // 3. 左端見切れ対策
+    // 拡大して画面幅より大きくなった場合、中央揃え(center)だと左端が見切れてスクロールできない。
+    // そのため、画面からはみ出す場合は左寄せ(flex-start)に切り替える。
+    
+    // 現在表示中の画像の幅を取得
+    const activeImg = document.querySelector('#model-' + currentModelId + ' img');
+    if (activeImg) {
+        const currentWidth = activeImg.naturalWidth * scale;
+        
+        if (currentWidth > window.innerWidth) {
+            stage.style.justifyContent = 'flex-start';
+        } else {
+            stage.style.justifyContent = 'center';
+        }
+    }
+}
+function changeZoom(amount) { setZoom(currentZoom + amount); }
+function autoFit() {
+    const img = document.querySelector('#model-' + currentModelId + ' img');    
+    if (!img || img.naturalWidth === 0) return;
+    const availableWidth = window.innerWidth - 40;
+    const availableHeight = window.innerHeight - 180;
+    let bestScale = Math.min(availableWidth / img.naturalWidth, availableHeight / img.naturalHeight);
+    let bestZoom = bestScale * 100;
+    if (bestZoom > 100) bestZoom = 100;
+    setZoom(bestZoom);
+}
+window.addEventListener('load', autoFit);
+window.addEventListener('resize', autoFit);
+
+// --- 4. 描画ロジック ---
+
+// グリッド描画
+function drawGrid() {
+    ctx.strokeStyle = 'rgba(0, 255, 0, 0.7)';
+    ctx.lineWidth = 1;
+    const gridSpacing = 50;
+    for (let x = 0; x < canvas.width; x += gridSpacing) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+    }
+    for (let y = 0; y < canvas.height; y += gridSpacing) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+    }
+}
+
+// ★追加: メニュー描画関数
+function drawMenu() {
+    // メニューが開いていない、または電源OFFなら描画しない
+    if (!scopeState.currentMenu || !scopeState.isOn) return;
+
+    const key = scopeState.currentMenu;
+    const data = menuData[key];
+    if (!data) return;
+
+    // メニューの幅と位置 (画面右端に固定)
+    const menuWidth = 140;
+    const menuX = canvas.width - menuWidth; 
+
+    // 背景 (半透明の濃紺)
+    ctx.fillStyle = "rgba(0, 0, 50, 0.85)";
+    ctx.fillRect(menuX, 0, menuWidth, canvas.height);
+
+    // 枠線
+    ctx.strokeStyle = "#888";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(menuX, 0, menuWidth, canvas.height);
+
+    // タイトル
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 16px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(data.title, menuX + (menuWidth / 2), 30);
+    
+    // 区切り線
+    ctx.beginPath();
+    ctx.moveTo(menuX, 40);
+    ctx.lineTo(canvas.width, 40);
+    ctx.stroke();
+
+    // 各項目を描画
+    ctx.font = "13px sans-serif";
+    const stepY = (canvas.height - 50) / 5; // 5つのボタンに対応する間隔
+
+    data.items.forEach((item, index) => {
+        // 項目の背景ボックス（ボタンっぽく）
+        const boxY = 50 + (index * stepY);
+        const boxHeight = 40;
+        
+        ctx.fillStyle = "#444";
+        ctx.fillRect(menuX + 5, boxY, menuWidth - 10, boxHeight);
+        
+        // 文字
+        ctx.fillStyle = "#fff";
+        // 2行に分かれる場合など簡易対応（ここでは1行中央表示）
+        ctx.fillText(item, menuX + (menuWidth / 2), boxY + 25);
     });
 }
 
-
-// =======================================================================
-//  4. 描画・アニメーションロジック
-// =======================================================================
-
-// 背景グリッドを描画する関数
-function drawGrid() {
-    ctx.strokeStyle = 'rgba(0, 255, 0, 0.2)'; // 薄い緑色
-    ctx.lineWidth = 1;
-    const gridSpacing = 50;
-
-    // 縦線
-    for (let x = 0; x < canvas.width; x += gridSpacing) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, canvas.height);
-        ctx.stroke();
-    }
-    // 横線
-    for (let y = 0; y < canvas.height; y += gridSpacing) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(canvas.width, y);
-        ctx.stroke();
-    }
-}
-
-// 波形を描画する関数
+// 波形描画（メインループから呼ばれる）
 function drawWaveform() {
-    // 画面をクリア
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // 背景を描画
-    drawGrid();
-
-    // 電源がOFFなら波形は描かない
+    // 電源OFFなら真っ暗にして終了
     if (!scopeState.isOn) {
+        // 画面を暗く塗りつぶす演出（任意）
+        ctx.fillStyle = "black";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         return;
     }
 
-    // 波形の設定
+    // 1. グリッドを描く
+    drawGrid();
+
+    // 2. 波形を描く
     ctx.beginPath();
-    ctx.strokeStyle = 'lime'; // 明るい緑
+    ctx.strokeStyle = 'yellow';
     ctx.lineWidth = 2;
 
     const centerY = canvas.height / 2;
     const amplitude = (canvas.height / 2) * (scopeState.voltage / 5.0);
 
-    // 左から右へ波を描く
     for (let x = 0; x < canvas.width; x++) {
-        // 時間軸の計算
         const time = (x / canvas.width) * (scopeState.timeScale * 10);
-        
-        // サイン波の計算 (timeOffsetで波を動かす)
         const y = centerY - Math.sin((time + scopeState.timeOffset) * 20) * amplitude;
-
-        if (x === 0) {
-            ctx.moveTo(x, y);
-        } else {
-            ctx.lineTo(x, y);
-        }
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
     }
     ctx.stroke();
+
+    // ★追加: 最後にメニューを描画する（波形の上に重ねるため）
+    drawMenu();
 }
 
-// アニメーションループ
 function animationLoop() {
-    // 電源ON かつ RUN状態のときだけ時間を進める
     if (scopeState.isOn && scopeState.isRunning) {
-        // -= にすることで波形を左から右へ流す
         scopeState.timeOffset -= 0.005; 
     }
-
-    // 描画実行
     if (canvas && ctx) {
         drawWaveform();
     }
-
-    // 次のフレームを予約
     requestAnimationFrame(animationLoop);
 }
 
-
-// =======================================================================
-//  5. イベントリスナー (全てのモデルに対して設定)
-// =======================================================================
-
-// ページ内のすべてのオシロスコープコンテナを取得
+// --- 5. イベントリスナー ---
 const containers = document.querySelectorAll('.instrument-container');
-
 containers.forEach(container => {
     
-    // --- クリックイベント (ボタン操作) ---
     container.addEventListener('click', function(e) {
-        // 表示されていないモデルでのクリックは無視
         if (container.style.display === 'none') return;
+        
+        // ホットスポットの判定
+        // ※map変換後のID(btn-xxx)か、元のtitle属性かどちらかで判定
+        let target = e.target;
+        if (!target.classList.contains('hotspot')) return;
 
-        // ホットスポットがクリックされた場合
-        if (e.target.classList.contains('hotspot')) {
-            const title = e.target.title;
+        const title = target.title; // 例: "電源ボタン", "CH1_MENU"
 
-            // [A] 電源ボタンの処理
-            if (title === '電源ボタン') {
-                console.log('電源操作');
-                const btn = e.target;
-                btn.classList.toggle('active');
-                
-                // 電源状態を更新
-                scopeState.isOn = btn.classList.contains('active');
-                
-                // 電源を入れたらRUN状態にする
-                if (scopeState.isOn) {
-                    scopeState.isRunning = true;
-                }
+        // [A] 電源ボタン
+        if (title === '電源ボタン') {
+            const btn = target;
+            btn.classList.toggle('active'); // activeクラスの付け外し
+            
+            scopeState.isOn = btn.classList.contains('active');
+            
+            if (scopeState.isOn) {
+                scopeState.isRunning = true;
+            } 
+        }
+        // [B] メニュー切り替えボタン (menuDataに定義があるもの)
+        else if (menuData[title]) {
+            console.log('メニューボタン:', title);
+            // 電源が入っていないとメニューは操作できない
+            if (!scopeState.isOn) return;
+
+            // 同じボタンなら閉じる、違うボタンなら切り替える
+            if (scopeState.currentMenu === title) {
+                scopeState.currentMenu = null;
+            } else {
+                scopeState.currentMenu = title;
             }
-            // [B] RUN/STOPボタンの処理
-            else if (title === 'RunStop') {
-                console.log('RUN/STOP操作');
-                scopeState.isRunning = !scopeState.isRunning;
-                // 必要に応じてボタンの見た目を変えるなら toggle('active') など
-            }
+        }
+        // [C] RunStop
+        else if (title === 'RunStop') {
+            scopeState.isRunning = !scopeState.isRunning;
         }
     });
 
-    // --- マウスオーバー (ツールチップ表示) ---
+    // ツールチップ関連
     container.addEventListener('mouseover', function(e) {
-        if (e.target.classList.contains('hotspot')) {
-            const title = e.target.title;
-            // 辞書に説明文があれば表示
-            if (descriptions[title] && tooltip) {
-                tooltip.innerText = descriptions[title];
-                tooltip.style.display = 'block';
-            }
+        if (e.target.classList.contains('hotspot') && descriptions[e.target.title]) {
+            tooltip.innerText = descriptions[e.target.title];
+            tooltip.style.display = 'block';
         }
     });
-
-// --- マウス移動 (ツールチップ追従) ---
     container.addEventListener('mousemove', function(e) {
         if (tooltip && tooltip.style.display === 'block') {
-            
-            const x = e.pageX + 15; // マウスから右に15px
-            const y = e.pageY + 15; // マウスから下に15px
-            
-            tooltip.style.left = x + 'px';
-            tooltip.style.top = y + 'px';
+            tooltip.style.left = (e.pageX + 15) + 'px';
+            tooltip.style.top = (e.pageY + 15) + 'px';
         }
     });
-    // --- マウスアウト (ツールチップ非表示) ---
     container.addEventListener('mouseout', function(e) {
-        if (e.target.classList.contains('hotspot') && tooltip) {
+        if (e.target.classList.contains('hotspot')) {
             tooltip.style.display = 'none';
         }
     });
 });
 
-
-// =======================================================================
-//  6. マップ変換機能 (エリア定義を透明なボタンdivに変換)
-// =======================================================================
+// --- 6. マップ変換機能 ---
 (function convertMapToHotspots() {
-    console.log("--- マップ変換処理を開始します ---");
-
-    // ページ内のすべての <map> タグを処理
     const maps = document.querySelectorAll('map');
-
     maps.forEach(map => {
-        const mapName = map.name; // 例: map-hantek
-        
-        // マップ名から対応するコンテナIDを推測 (map-hantek -> model-hantek)
-        const containerId = mapName.replace('map-', 'model-');
+        const containerId = map.name.replace('map-', 'model-');
         const targetContainer = document.getElementById(containerId);
-
-        if (!targetContainer) {
-            console.warn(`マップ ${mapName} に対応するコンテナ ${containerId} が見つかりません。`);
-            return;
-        }
+        if (!targetContainer) return;
 
         const areas = map.querySelectorAll('area');
-
         areas.forEach((area, index) => {
-            try {
-                const shape = area.getAttribute('shape');
-                const coordsStr = area.getAttribute('coords');
-                
-                if (!coordsStr) return;
+            const shape = area.getAttribute('shape');
+            const coords = area.getAttribute('coords').split(',').map(Number);
+            const title = area.getAttribute('title') || area.getAttribute('alt');
 
-                const coords = coordsStr.split(',').map(n => parseFloat(n));
-                
-                // タイトル取得
-                const title = area.getAttribute('title') || area.getAttribute('alt') || `button-${index}`;
+            const div = document.createElement('div');
+            div.className = 'hotspot';
+            div.title = title;
+            div.id = 'btn-' + title.replace(/\s+/g, '-');
+            div.style.position = 'absolute';
+            div.style.zIndex = '100';
+            div.style.cursor = 'pointer';
+            // 開発用：赤色 (完成時は transparent にする)
+            div.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
 
-                // div要素作成
-                const div = document.createElement('div');
-                div.className = 'hotspot';
-                div.title = title;
-                
-                // ID生成 (スペースをハイフンに)
-                div.id = 'btn-' + title.replace(/\s+/g, '-');
-                // ※電源ボタンのID強制変換は不要（クリックイベントでtitle判定しているため）
-
-                // スタイル設定
-                div.style.position = 'absolute';
-                div.style.zIndex = '100'; // Canvasより手前に
-                div.style.cursor = 'pointer';
-                // 開発用：赤く表示 (完成したら transparent に変更してください)
-                div.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
-
-                // --- 形状ごとの座標計算 ---
-                // 四角形 (Rect)
-                if (shape === 'rect' && coords.length >= 4) {
-                    const [x1, y1, x2, y2] = coords;
-                    div.style.left = Math.min(x1, x2) + 'px';
-                    div.style.top = Math.min(y1, y2) + 'px';
-                    div.style.width = Math.abs(x2 - x1) + 'px';
-                    div.style.height = Math.abs(y2 - y1) + 'px';
-                }
-                // 円形 (Circle)
-                else if (shape === 'circle' && coords.length >= 3) {
-                    const [x, y, r] = coords;
-                    div.style.left = (x - r) + 'px';
-                    div.style.top = (y - r) + 'px';
-                    div.style.width = (r * 2) + 'px';
-                    div.style.height = (r * 2) + 'px';
-                    div.style.borderRadius = '50%';
-                }
-                // 多角形 (Poly) - 必要時のための実装
-                else if (shape === 'poly' && coords.length >= 2) {
-                    // 簡易的なバウンディングボックス計算
-                    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-                    for (let i = 0; i < coords.length; i += 2) {
-                        const x = coords[i];
-                        const y = coords[i+1];
-                        if (x < minX) minX = x;
-                        if (x > maxX) maxX = x;
-                        if (y < minY) minY = y;
-                        if (y > maxY) maxY = y;
-                    }
-                    div.style.left = minX + 'px';
-                    div.style.top = minY + 'px';
-                    div.style.width = (maxX - minX) + 'px';
-                    div.style.height = (maxY - minY) + 'px';
-                }
-
-                // コンテナに追加
-                targetContainer.appendChild(div);
-
-            } catch (e) {
-                console.error("エリア変換エラー:", e);
+            if (shape === 'rect') {
+                const [x1, y1, x2, y2] = coords;
+                div.style.left = Math.min(x1, x2) + 'px';
+                div.style.top = Math.min(y1, y2) + 'px';
+                div.style.width = Math.abs(x2 - x1) + 'px';
+                div.style.height = Math.abs(y2 - y1) + 'px';
+            } else if (shape === 'circle') {
+                const [x, y, r] = coords;
+                div.style.left = (x - r) + 'px';
+                div.style.top = (y - r) + 'px';
+                div.style.width = (r * 2) + 'px';
+                div.style.height = (r * 2) + 'px';
+                div.style.borderRadius = '50%';
             }
+            targetContainer.appendChild(div);
         });
     });
-    console.log("--- マップ変換処理完了 ---");
 })();
 
-
-// ==========================================
-// UI連動型のモデル切り替え関数
-// ==========================================
 function switchModelUI(modelName) {
-    // 1. 本来のモデル切り替え処理を実行
     changeModel(modelName);
-
-    // 2. ボタンの見た目を更新（青く光らせる）
-    // 一旦両方の active クラスを外す
     document.getElementById('btn-model-hantek').classList.remove('active');
     document.getElementById('btn-model-agilent').classList.remove('active');
-
-    // 選ばれた方だけに active クラスを付ける
     document.getElementById('btn-model-' + modelName).classList.add('active');
 }
 
-
-
-// =======================================================================
-//  7. アプリケーション開始
-// =======================================================================
-// アニメーションループを開始
+// アプリケーション開始
 animationLoop();
