@@ -3,17 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <title>実験器具学習サイト</title>
+    <!-- CSSファイルの読み込み -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
 <!-- コントロールパネル -->
 <div class="control-panel">
     
-    <!-- 左側：モデル切り替えグループ -->
+    <!-- 左側：モデル切り替え -->
     <div class="control-group">
         <span class="panel-label">MODEL SELECT</span>
         <div class="button-group">
-            <!-- 押されている方がわかるように active クラスを付け替えられるようにします -->
             <button id="btn-model-hantek" class="panel-btn active" onclick="switchModelUI('hantek')">Hantek</button>
             <button id="btn-model-agilent" class="panel-btn" onclick="switchModelUI('agilent')">Agilent</button>
         </div>
@@ -22,7 +23,7 @@
     <!-- 区切り線 -->
     <div class="panel-divider"></div>
 
-    <!-- 右側：ズーム操作グループ -->
+    <!-- 右側：ズーム操作 -->
     <div class="control-group">
         <span class="panel-label">VIEW SCALE</span>
         <div class="zoom-controls">
@@ -34,69 +35,77 @@
         </div>
     </div>
     
-</div>    <!-- モデルA: Hantek -->
+</div>
+
+<!-- メインステージ（ここが重要：オシロスコープ表示エリア） -->
+<div class="main-stage">
+
     <!-- ========================================== -->
-    <!-- ID "model-hantek" を追加 -->
+    <!-- モデルA: Hantek -->
+    <!-- ========================================== -->
     <div id="model-hantek" class="instrument-container active-model">
         <img src="oscilloscope-body.png" alt="Hantekオシロスコープ">
         
         <div id="screen-hantek" class="screen-area">
-            <!-- IDを変更: canvas-hantek -->
             <canvas id="canvas-hantek" width="610" height="360"></canvas>
         </div>
         
-        <!-- マップ名も固有のものに変更: map-hantek -->
         <map name="map-hantek">
-            <area target="" alt="電源ボタン" title="電源ボタン" href="" coords="134,703,18" shape="circle">
-            <area target="" alt="CH1_MENU" title="CH1_MENU" href="" coords="880,516,835,488" shape="rect">
-            <area target="" alt="CH2_MENU" title="CH2_MENU" href="" coords="968,487,1013,517" shape="rect">
-            <area target="" alt="RunStop" title="RunStop" href="" coords="1202,269,1246,298" shape="rect">
-            <area target="" alt="AutoSet" title="AutoSet" href="" coords="1131,241,1177,270" shape="rect">
-            <area target="" alt="Single" title="Single" href="" coords="1131,292,1177,322" shape="rect">
-            <area target="" alt="Acquire" title="Acquire" href="" coords="1061,238,1106,270" shape="rect">
-            <area target="" alt="Measure" title="Measure" href="" coords="994,241,1039,268" shape="rect">
-            <area target="" alt="SaveRecall" title="SaveRecall" href="" coords="927,240,972,269" shape="rect">
-            <area target="" alt="Display" title="Display" href="" coords="1061,292,1106,322" shape="rect">
-            <area target="" alt="Cursor" title="Cursor" href="" coords="994,292,1038,321" shape="rect">
-            <area target="" alt="Utility" title="Utility" href="" coords="927,293,971,320" shape="rect">
-            <area target="" alt="F1" title="F1" href="" coords="733,337,770,363" shape="rect">
-            <area target="" alt="F2" title="F2" href="" coords="733,398,770,419" shape="rect">
-            <area target="" alt="F3" title="F3" href="" coords="733,456,771,479" shape="rect">
-            <area target="" alt="F4" title="F4" href="" coords="733,515,771,539" shape="rect">
-            <area target="" alt="F5" title="F5" href="" coords="733,573,771,596" shape="rect">
-            <area target="" alt="Ch1" title="Ch1" href="" coords="861,683,18" shape="circle">
-            <area target="" alt="Ch2" title="Ch2" href="" coords="992,684,18" shape="circle">
-        </map>
+            <!-- 既存のボタン定義 -->
+            <area target="" alt="電源ボタン" title="電源ボタン" coords="134,703,18" shape="circle">
+            <area target="" alt="CH1_MENU" title="CH1_MENU" coords="880,516,835,488" shape="rect">
+            <area target="" alt="CH2_MENU" title="CH2_MENU" coords="968,487,1013,517" shape="rect">
+            <area target="" alt="RunStop" title="RunStop" coords="1202,269,1246,298" shape="rect">
+            <area target="" alt="AutoSet" title="AutoSet" coords="1131,241,1177,270" shape="rect">
+            <area target="" alt="Single" title="Single" coords="1131,292,1177,322" shape="rect">
+            <area target="" alt="Acquire" title="Acquire" coords="1061,238,1106,270" shape="rect">
+            <area target="" alt="Measure" title="Measure" coords="994,241,1039,268" shape="rect">
+            <area target="" alt="SaveRecall" title="SaveRecall" coords="927,240,972,269" shape="rect">
+            <area target="" alt="Display" title="Display" coords="1061,292,1106,322" shape="rect">
+            <area target="" alt="Cursor" title="Cursor" coords="994,292,1038,321" shape="rect">
+            <area target="" alt="Utility" title="Utility" coords="927,293,971,320" shape="rect">
+            <area target="" alt="F1" title="F1" coords="733,337,770,363" shape="rect">
+            <area target="" alt="F2" title="F2" coords="733,398,770,419" shape="rect">
+            <area target="" alt="F3" title="F3" coords="733,456,771,479" shape="rect">
+            <area target="" alt="F4" title="F4" coords="733,515,771,539" shape="rect">
+            <area target="" alt="F5" title="F5" coords="733,573,771,596" shape="rect">
+            <area target="" alt="Ch1" title="Ch1" coords="861,683,18" shape="circle">
+            <area target="" alt="Ch2" title="Ch2" coords="992,684,18" shape="circle">
+            <area target="" alt="電圧調整" title="KNOB_VOLT" href="" coords="861,583,30" shape="circle">
+            <area target="" alt="時間調整" title="KNOB_TIME" href="" coords="991,582,31" shape="circle">        </map>
     </div>
 
     <!-- ========================================== -->
-    <!-- モデルB: Agilent (新しいもの) -->
+    <!-- モデルB: Agilent -->
     <!-- ========================================== -->
-    <!-- 最初は非表示 (style="display: none") -->
     <div id="model-agilent" class="instrument-container" style="display: none;">
-        <!-- 新しい画像を用意してください -->
         <img src="agilent-body.png" alt="Agilentオシロスコープ">
         
-        <!-- 画面の位置もCSSで調整が必要です -->
         <div id="screen-agilent" class="screen-area">
             <canvas id="canvas-agilent" width="1110" height="665"></canvas>
         </div>
-            <!-- 新しいマップ定義 -->
+
         <map name="map-agilent">
-            <area target="" alt="電源ボタン" title="電源ボタン" href="" coords="172,1030,250,1084" shape="rect">
-            <area target="" alt="CH1_MENU" title="CH1_MENU" href="" coords="1519,743,1561,809" shape="rect">
-            <area target="" alt="CH2_MENU" title="CH2_MENU" href="" coords="1708,741,1742,807" shape="rect">
-            <area target="" alt="CH3_MENU" title="CH3_MENU" href="" coords="1895,741,1931,805" shape="rect">
-            <area target="" alt="CH4_MENU" title="CH4_MENU" href="" coords="2081,740,2119,808" shape="rect">
-            <area target="" alt="RunStop" title="RunStop" href="" coords="1894,103,2007,154" shape="rect">
-            <area target="" alt="Single" title="Single" href="" coords="2037,102,2152,153" shape="rect">
+            <area target="" alt="電源ボタン" title="電源ボタン" coords="172,1030,250,1084" shape="rect">
+            <area target="" alt="CH1_MENU" title="CH1_MENU" coords="1519,743,1561,809" shape="rect">
+            <area target="" alt="CH2_MENU" title="CH2_MENU" coords="1708,741,1742,807" shape="rect">
+            <area target="" alt="CH3_MENU" title="CH3_MENU" coords="1895,741,1931,805" shape="rect">
+            <area target="" alt="CH4_MENU" title="CH4_MENU" coords="2081,740,2119,808" shape="rect">
+            <area target="" alt="RunStop" title="RunStop" coords="1894,103,2007,154" shape="rect">
+            <area target="" alt="Single" title="Single" coords="2037,102,2152,153" shape="rect">
+            <area target="" alt="時間ツマミ" title="KNOB_TIME" coords="1494,167,41" shape="circle">
+            <area target="" alt="電圧ツマミ" title="KNOB_VOLT" coords="1544,673,36" shape="circle">
         </map>
     </div>
 
-    <div id="tooltip-hantek" class="tooltip"></div>
-    <div id="tooltip-agilent" class="tooltip"></div>
+</div> <!-- /.main-stage -->
 
+<!-- ツールチップ用 -->
+<div id="tooltip-hantek" class="tooltip"></div>
+<div id="tooltip-agilent" class="tooltip"></div>
 
-    <script src="script.js"></script>
+<!-- JavaScriptファイルの読み込み -->
+<script src="script.js"></script>
+
 </body>
 </html>

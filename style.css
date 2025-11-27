@@ -14,30 +14,32 @@ body {
 }
 
 .main-stage {
-    width: 100%;             /* 画面の横幅いっぱいを使う */
-    display: flex;           /* Flexboxを使う */
-    justify-content: center; /* 中身を強制的に中央揃えにする */
+    width: 100%;
+    height: calc(100vh - 150px); /* 画面の高さいっぱい確保 */
     
-    overflow-x: auto; 
+    /* フレックスボックスではなくブロック表示にする（重要） */
+    display: block; 
     
-    /* 下に少し余白を持たせる */
-    padding-bottom: 50px;
+    /* スクロールバーはこの要素に出す */
+    overflow: auto; 
+    
+    /* 余計な余白や中央揃え設定をリセット */
+    text-align: left;
+    position: relative;
+    padding: 0;
 }
 
 
 .instrument-container {
-    position: relative;
-    display: block; 
+    transform-origin: 0 0; 
     
-    /* margin: 0 auto; は親の justify-content: center が効くので削除または無効化 */
+    /* マージンはJSで操作するので0にしておく */
     margin: 0; 
-
-    /* ズームの基準点を「上・中央」に固定（最重要） */
-    transform-origin: top center;
-    transition: transform 0.2s ease;
-
+    
+    /* 他の設定は以前のままでOK */
+    position: relative;
+    display: block;
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
-    border-radius: 4px;
 }
 
 .screen-area {

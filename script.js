@@ -1,5 +1,5 @@
 // =======================================================================
-//  script.js (メニュー表示・電源連動対応版)
+//  script.js (メニュー・ズーム・ツマミ操作 完全統合版)
 // =======================================================================
 
 // --- 1. グローバル変数と初期設定 ---
@@ -9,17 +9,25 @@ let canvas = document.querySelector('#canvas-hantek');
 let ctx = canvas.getContext('2d');
 let tooltip = document.querySelector('#tooltip-hantek');
 
+// ステップ（刻み）の定義 (1, 2, 5 の法則)
+const VOLT_STEPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0];
+const TIME_STEPS = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0];
+
 // オシロスコープの状態管理
 const scopeState = {
     isOn: false,      // 電源の状態
     isRunning: true,  // 波形の動き
-    voltage: 5.0,     // 電圧スケール
-    timeScale: 0.1,   // 時間スケール
-    timeOffset: 0,    // 波形オフセット
-    currentMenu: null // ★追加: 現在表示中のメニューキー
+    activeChannel: 'CH1',
+    
+    voltIndexCH1: 6,     // CH1の電圧 (初期値 1V)
+    voltIndexCH2: 6,     // CH2の電圧 (初期値 1V)
+    timeIndex: 6,     // 初期値: TIME_STEPS[6] = 0.1s (=100ms)
+    
+    timeOffset: 0,    // 波形アニメーション用
+    currentMenu: null // 表示中のメニュー
 };
 
-// --- ★追加: メニューの内容データ ---
+// メニューの内容データ
 const menuData = {
     "CH1_MENU": {
         title: "CH1 SETTING",
@@ -32,15 +40,10 @@ const menuData = {
     "Measure": {
         title: "MEASURE",
         items: ["Source: CH1", "Type: Vpp", "Type: Freq", "Type: Period", "Clear: All"]
-    },
-    // 必要なら他のボタンもここに追加
-    "Acquire": {
-        title: "ACQUIRE",
-        items: ["Mode: Sample", "Peak Detect", "Average", "Depth: Normal"]
     }
 };
 
-// --- 2. ボタンの説明文データ ---
+// ボタン説明文
 const descriptions = {
     "電源ボタン": "電源をオン・オフします。",
     "F1": "画面メニューの選択ボタン。",
@@ -65,7 +68,8 @@ const descriptions = {
     "Ch2": "CH2入力端子。"
 };
 
-// --- 3. モデル切り替え機能 ---
+
+// --- 2. モデル切り替え機能 ---
 function changeModel(modelName) {
     console.log('モデル切り替え:', modelName);
     currentModelId = modelName;
@@ -83,90 +87,111 @@ function changeModel(modelName) {
     }
 }
 
-// ズーム関連
+function switchModelUI(modelName) {
+    changeModel(modelName);
+    document.getElementById('btn-model-hantek').classList.remove('active');
+    document.getElementById('btn-model-agilent').classList.remove('active');
+    document.getElementById('btn-model-' + modelName).classList.add('active');
+}
+
+
+// --- ズーム機能 (完全版: 位置ズレ防止・正確な中央寄せ) ---
 let currentZoom = 100;
+
 function setZoom(newZoom) {
-    // 範囲制限 (20% ~ 400%くらいまで拡大できるように上限を上げる)
     if (newZoom < 20) newZoom = 20;
-    if (newZoom > 400) newZoom = 400; // 上限を増やしました
+    if (newZoom > 400) newZoom = 400;
 
     currentZoom = Math.floor(newZoom);
     const scale = currentZoom / 100;
 
-    // 画面のパーセント表示を更新
     const zoomDisplay = document.getElementById('zoom-display');
-    if (zoomDisplay) {
-        zoomDisplay.innerText = currentZoom + '%';
-    }
+    if (zoomDisplay) zoomDisplay.innerText = currentZoom + '%';
 
-    // コンテナの取得
     const containers = document.querySelectorAll('.instrument-container');
+    
+    // ★修正: 画面全体ではなく、親枠(main-stage)の幅を取得する
     const stage = document.querySelector('.main-stage');
+    // ステージがない場合の安全策
+    const viewWidth = stage ? stage.clientWidth : window.innerWidth;
+    const viewHeight = stage ? stage.clientHeight : window.innerHeight;
 
     containers.forEach(container => {
-        // 1. 変形を適用
+        if (container.style.display === 'none') return;
+
+        const img = container.querySelector('img');
+        if (!img) return;
+        
+        const originalWidth = img.naturalWidth;
+        const originalHeight = img.naturalHeight;
+        if (originalWidth === 0) return;
+
+        const scaledWidth = originalWidth * scale;
+        const scaledHeight = originalHeight * scale;
+
+        // 1. 変形適用 (左上基準)
         container.style.transform = `scale(${scale})`;
-        
-        // 2. 拡大した分のスペース確保（スクロールバーを出すため）
-        // transform: scale は元の領域サイズしか確保しないため、
-        // 拡大した分のはみ出し量を margin で押し広げる
-        
-        const rect = container.getBoundingClientRect(); // 現在の見た目のサイズ
-        const originalHeight = container.offsetHeight;
-        const originalWidth = container.offsetWidth;
 
-        // 縦方向: 下に伸びた分だけ margin-bottom を追加
-        // transform-origin: top center なので下方向への伸びは (scale - 1) * height
-        if (scale > 1) {
-            const verticalOverflow = originalHeight * (scale - 1);
-            container.style.marginBottom = verticalOverflow + "px";
-            
-            // 横方向: 左右に広がった分、margin-left/right を追加して重なり防止
-            const horizontalOverflow = (originalWidth * (scale - 1)) / 2;
-            container.style.marginLeft = horizontalOverflow + "px";
-            container.style.marginRight = horizontalOverflow + "px";
-        } else {
-            container.style.marginBottom = "0px";
-            container.style.marginLeft = "0px";
-            container.style.marginRight = "0px";
+        // 2. 位置計算
+        // 親枠より画像が小さい -> 余白を入れて中央へ
+        // 親枠より画像が大きい -> 余白0で左詰め（スクロールさせるため）
+        
+        let marginLeft = 0;
+        let marginTop = 0; // 縦方向も中央にしたい場合用
+
+        if (scaledWidth < viewWidth) {
+            marginLeft = (viewWidth - scaledWidth) / 2;
         }
+
+        // (任意) 縦方向も中央寄せしたい場合は以下のコメントを外す
+        /*
+        if (scaledHeight < viewHeight) {
+            marginTop = (viewHeight - scaledHeight) / 2;
+        }
+        */
+
+        // 3. マージン適用
+        container.style.marginLeft = `${marginLeft}px`;
+        container.style.marginTop = `${marginTop}px`; // 通常は0
+
+        // 4. スクロール領域の確保
+        // transformで拡大した分を margin-bottom/right で押し広げる
+        const marginBottom = (scaledHeight - originalHeight) + 50; 
+        const marginRight = (scaledWidth - originalWidth);
+
+        container.style.marginBottom = `${marginBottom}px`;
+        container.style.marginRight = `${marginRight}px`;
     });
-
-    // 3. 左端見切れ対策
-    // 拡大して画面幅より大きくなった場合、中央揃え(center)だと左端が見切れてスクロールできない。
-    // そのため、画面からはみ出す場合は左寄せ(flex-start)に切り替える。
-    
-    // 現在表示中の画像の幅を取得
-    const activeImg = document.querySelector('#model-' + currentModelId + ' img');
-    if (activeImg) {
-        const currentWidth = activeImg.naturalWidth * scale;
-        
-        if (currentWidth > window.innerWidth) {
-            stage.style.justifyContent = 'flex-start';
-        } else {
-            stage.style.justifyContent = 'center';
-        }
-    }
 }
 function changeZoom(amount) { setZoom(currentZoom + amount); }
+
 function autoFit() {
     const img = document.querySelector('#model-' + currentModelId + ' img');    
     if (!img || img.naturalWidth === 0) return;
-    const availableWidth = window.innerWidth - 40;
-    const availableHeight = window.innerHeight - 180;
+    
+    const stage = document.querySelector('.main-stage');
+    const availableWidth = stage ? stage.clientWidth : (window.innerWidth - 40);
+    const availableHeight = stage ? stage.clientHeight : (window.innerHeight - 180);
+
+    // 画像が収まる倍率を計算
     let bestScale = Math.min(availableWidth / img.naturalWidth, availableHeight / img.naturalHeight);
     let bestZoom = bestScale * 100;
+
+    // 少し余白を持たせるために 95% くらいにする
+    bestZoom = bestZoom * 0.95;
+
     if (bestZoom > 100) bestZoom = 100;
     setZoom(bestZoom);
 }
+
 window.addEventListener('load', autoFit);
 window.addEventListener('resize', autoFit);
 
+
 // --- 4. 描画ロジック ---
 
-// グリッド描画
 function drawGrid() {
-    ctx.strokeStyle = 'rgba(0, 255, 0, 0.7)';
+    ctx.strokeStyle = 'rgba(0, 255, 0, 0.6)'; // くっきり表示
     ctx.lineWidth = 1;
     const gridSpacing = 50;
     for (let x = 0; x < canvas.width; x += gridSpacing) {
@@ -177,97 +202,112 @@ function drawGrid() {
     }
 }
 
-// ★追加: メニュー描画関数
 function drawMenu() {
-    // メニューが開いていない、または電源OFFなら描画しない
     if (!scopeState.currentMenu || !scopeState.isOn) return;
-
     const key = scopeState.currentMenu;
     const data = menuData[key];
     if (!data) return;
 
-    // メニューの幅と位置 (画面右端に固定)
     const menuWidth = 140;
     const menuX = canvas.width - menuWidth; 
 
-    // 背景 (半透明の濃紺)
     ctx.fillStyle = "rgba(0, 0, 50, 0.85)";
     ctx.fillRect(menuX, 0, menuWidth, canvas.height);
-
-    // 枠線
     ctx.strokeStyle = "#888";
     ctx.lineWidth = 2;
     ctx.strokeRect(menuX, 0, menuWidth, canvas.height);
 
-    // タイトル
     ctx.fillStyle = "#fff";
     ctx.font = "bold 16px sans-serif";
     ctx.textAlign = "center";
     ctx.fillText(data.title, menuX + (menuWidth / 2), 30);
     
-    // 区切り線
-    ctx.beginPath();
-    ctx.moveTo(menuX, 40);
-    ctx.lineTo(canvas.width, 40);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(menuX, 40); ctx.lineTo(canvas.width, 40); ctx.stroke();
 
-    // 各項目を描画
     ctx.font = "13px sans-serif";
-    const stepY = (canvas.height - 50) / 5; // 5つのボタンに対応する間隔
-
+    const stepY = (canvas.height - 50) / 5;
     data.items.forEach((item, index) => {
-        // 項目の背景ボックス（ボタンっぽく）
         const boxY = 50 + (index * stepY);
-        const boxHeight = 40;
-        
         ctx.fillStyle = "#444";
-        ctx.fillRect(menuX + 5, boxY, menuWidth - 10, boxHeight);
-        
-        // 文字
+        ctx.fillRect(menuX + 5, boxY, menuWidth - 10, 40);
         ctx.fillStyle = "#fff";
-        // 2行に分かれる場合など簡易対応（ここでは1行中央表示）
         ctx.fillText(item, menuX + (menuWidth / 2), boxY + 25);
     });
 }
 
-// 波形描画（メインループから呼ばれる）
 function drawWaveform() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // 電源OFFなら真っ暗にして終了
     if (!scopeState.isOn) {
-        // 画面を暗く塗りつぶす演出（任意）
         ctx.fillStyle = "black";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         return;
     }
 
-    // 1. グリッドを描く
     drawGrid();
 
-    // 2. 波形を描く
+    let currentVoltIndex;
+    if (scopeState.activeChannel === 'CH1') {
+        currentVoltIndex = scopeState.voltIndexCH1;
+    } else {
+        currentVoltIndex = scopeState.voltIndexCH2;
+    }
+
+    const currentVoltDiv = VOLT_STEPS[currentVoltIndex]; // ここで決定
+    const currentTimeDiv = TIME_STEPS[scopeState.timeIndex];
+
+    // 波形計算
     ctx.beginPath();
-    ctx.strokeStyle = 'yellow';
+    ctx.strokeStyle = 'lime';
     ctx.lineWidth = 2;
 
     const centerY = canvas.height / 2;
-    const amplitude = (canvas.height / 2) * (scopeState.voltage / 5.0);
+    const pixelsPerGrid = 50; // 1グリッドあたりのピクセル数と仮定
+
+    // 振幅計算: 3Vppの信号を入力したと仮定
+    const signalAmplitudeV = 3.0; 
+    const amplitudePx = (signalAmplitudeV / currentVoltDiv) * pixelsPerGrid;
+    const frequency = 50; // 50Hzの信号と仮定
 
     for (let x = 0; x < canvas.width; x++) {
-        const time = (x / canvas.width) * (scopeState.timeScale * 10);
-        const y = centerY - Math.sin((time + scopeState.timeOffset) * 20) * amplitude;
+        const gridX = x / pixelsPerGrid;
+        const time = gridX * currentTimeDiv; // 横軸の時間
+
+        const y = centerY - Math.sin(2 * Math.PI * frequency * (time + scopeState.timeOffset)) * amplitudePx;
+
         if (x === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
     }
     ctx.stroke();
 
-    // ★追加: 最後にメニューを描画する（波形の上に重ねるため）
+    // 数値情報（インジケーター）の描画
+    ctx.fillStyle = "white";
+    ctx.font = "bold 16px sans-serif";
+    
+    // 左下: 電圧
+    ctx.textAlign = "left";
+    let vText = currentVoltDiv >= 1 ? `${currentVoltDiv.toFixed(2)}V` : `${(currentVoltDiv*1000).toFixed(0)}mV`;
+    
+    // 文字色を変えると分かりやすい (CH1:黄色, CH2:水色)
+    if (scopeState.activeChannel === 'CH1') {
+        ctx.fillStyle = "yellow";
+        ctx.fillText(`CH1 ${vText}`, 20, canvas.height - 20);
+    } else {
+        ctx.fillStyle = "cyan";
+        ctx.fillText(`CH2 ${vText}`, 20, canvas.height - 20);
+    }
+    // 中央下: 時間
+    ctx.textAlign = "center";
+    let tText = currentTimeDiv >= 1 ? `${currentTimeDiv.toFixed(2)}s` : 
+                currentTimeDiv >= 0.001 ? `${(currentTimeDiv*1000).toFixed(2)}ms` : `${(currentTimeDiv*1000000).toFixed(0)}us`;
+    ctx.fillText(`M ${tText}`, canvas.width / 2, canvas.height - 20);
+
     drawMenu();
 }
 
 function animationLoop() {
     if (scopeState.isOn && scopeState.isRunning) {
-        scopeState.timeOffset -= 0.005; 
+        scopeState.timeOffset -= 0.0001; 
     }
     if (canvas && ctx) {
         drawWaveform();
@@ -275,51 +315,87 @@ function animationLoop() {
     requestAnimationFrame(animationLoop);
 }
 
+
 // --- 5. イベントリスナー ---
 const containers = document.querySelectorAll('.instrument-container');
+
 containers.forEach(container => {
     
+    // --- クリックイベント ---
     container.addEventListener('click', function(e) {
         if (container.style.display === 'none') return;
         
-        // ホットスポットの判定
-        // ※map変換後のID(btn-xxx)か、元のtitle属性かどちらかで判定
         let target = e.target;
         if (!target.classList.contains('hotspot')) return;
+        const title = target.title;
 
-        const title = target.title; // 例: "電源ボタン", "CH1_MENU"
-
-        // [A] 電源ボタン
         if (title === '電源ボタン') {
-            const btn = target;
-            btn.classList.toggle('active'); // activeクラスの付け外し
-            
-            scopeState.isOn = btn.classList.contains('active');
-            
+            target.classList.toggle('active');
+            scopeState.isOn = target.classList.contains('active');
             if (scopeState.isOn) {
                 scopeState.isRunning = true;
-            } 
-        }
-        // [B] メニュー切り替えボタン (menuDataに定義があるもの)
-        else if (menuData[title]) {
-            console.log('メニューボタン:', title);
-            // 電源が入っていないとメニューは操作できない
-            if (!scopeState.isOn) return;
-
-            // 同じボタンなら閉じる、違うボタンなら切り替える
-            if (scopeState.currentMenu === title) {
-                scopeState.currentMenu = null;
+                scopeState.currentMenu = 'CH1_MENU'; // 電源ONでメニュー表示
             } else {
-                scopeState.currentMenu = title;
+                scopeState.currentMenu = null;
             }
         }
-        // [C] RunStop
+        else if (menuData[title] && scopeState.isOn) {
+            scopeState.currentMenu = (scopeState.currentMenu === title) ? null : title;
+        }
         else if (title === 'RunStop') {
             scopeState.isRunning = !scopeState.isRunning;
         }
+        else if (title === 'CH1_MENU' || title === 'Ch1') { // Ch1端子クリックでも可とする場合
+            scopeState.activeChannel = 'CH1';
+            scopeState.currentMenu = 'CH1_MENU'; // ついでにメニューも開く
+            console.log("操作対象: CH1");
+        }
+        else if (title === 'CH2_MENU' || title === 'Ch2') {
+            scopeState.activeChannel = 'CH2';
+            scopeState.currentMenu = 'CH2_MENU';
+            console.log("操作対象: CH2");
+        }
+
+
     });
 
-    // ツールチップ関連
+    // --- マウスホイールイベント (ツマミ用) ---
+    // ここがループの内側にあることが重要です！
+    container.addEventListener('wheel', function(e) {
+        if (!e.target.classList.contains('hotspot')) return;
+        const title = e.target.title;
+
+        // 電圧ツマミ
+        if (title === 'KNOB_VOLT') {
+            e.preventDefault();
+            if (scopeState.activeChannel === 'CH1') {
+                if (e.deltaY > 0) {
+                    if (scopeState.voltIndexCH1 < VOLT_STEPS.length - 1) scopeState.voltIndexCH1++;
+                } else {
+                    if (scopeState.voltIndexCH1 > 0) scopeState.voltIndexCH1--;
+                }
+            } else {
+                // CH2の場合
+                if (e.deltaY > 0) {
+                    if (scopeState.voltIndexCH2 < VOLT_STEPS.length - 1) scopeState.voltIndexCH2++;
+                } else {
+                    if (scopeState.voltIndexCH2 > 0) scopeState.voltIndexCH2--;
+                }
+            }
+        }
+        // 時間ツマミ
+        else if (title === 'KNOB_TIME') {
+            e.preventDefault();
+            if (e.deltaY > 0) { // 手前へ回す（時間圧縮＝レンジ上げ）
+                if (scopeState.timeIndex < TIME_STEPS.length - 1) scopeState.timeIndex++;
+            } else { // 奥へ回す（時間拡大＝レンジ下げ）
+                if (scopeState.timeIndex > 0) scopeState.timeIndex--;
+            }
+        }
+    }, { passive: false });
+
+
+    // --- ツールチップ関連 ---
     container.addEventListener('mouseover', function(e) {
         if (e.target.classList.contains('hotspot') && descriptions[e.target.title]) {
             tooltip.innerText = descriptions[e.target.title];
@@ -333,11 +409,10 @@ containers.forEach(container => {
         }
     });
     container.addEventListener('mouseout', function(e) {
-        if (e.target.classList.contains('hotspot')) {
-            tooltip.style.display = 'none';
-        }
+        tooltip.style.display = 'none';
     });
 });
+
 
 // --- 6. マップ変換機能 ---
 (function convertMapToHotspots() {
@@ -348,7 +423,7 @@ containers.forEach(container => {
         if (!targetContainer) return;
 
         const areas = map.querySelectorAll('area');
-        areas.forEach((area, index) => {
+        areas.forEach((area) => {
             const shape = area.getAttribute('shape');
             const coords = area.getAttribute('coords').split(',').map(Number);
             const title = area.getAttribute('title') || area.getAttribute('alt');
@@ -381,13 +456,6 @@ containers.forEach(container => {
         });
     });
 })();
-
-function switchModelUI(modelName) {
-    changeModel(modelName);
-    document.getElementById('btn-model-hantek').classList.remove('active');
-    document.getElementById('btn-model-agilent').classList.remove('active');
-    document.getElementById('btn-model-' + modelName).classList.add('active');
-}
 
 // アプリケーション開始
 animationLoop();
