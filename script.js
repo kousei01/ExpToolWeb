@@ -24,7 +24,12 @@ const scopeState = {
     timeIndex: 6,     // 初期値: TIME_STEPS[6] = 0.1s (=100ms)
     
     timeOffset: 0,    // 波形アニメーション用
-    currentMenu: null // 表示中のメニュー
+    currentMenu: null, // 表示中のメニュー
+
+    signals: {
+        'CH1': { type: 'sine', amplitude: 2.0, frequency: 50 }, // 初期値: 正弦波, 2V
+        'CH2': { type: 'sine', amplitude: 2.0, frequency: 50 }  // 初期値: 正弦波, 2V
+    }
 };
 
 // メニューの内容データ
@@ -165,6 +170,46 @@ function setZoom(newZoom) {
 }
 function changeZoom(amount) { setZoom(currentZoom + amount); }
 
+// 波形の種類を変更
+function setWaveType(type) {
+    // 現在選択中のチャンネルの信号を変更
+    const ch = scopeState.activeChannel;
+    scopeState.signals[ch].type = type;
+
+    // UIのボタンの見た目を更新 (Sine/Square/Tri の active 切り替え)
+    document.querySelectorAll('[id^="btn-wave-"]').forEach(btn => btn.classList.remove('active'));
+    document.getElementById('btn-wave-' + type).classList.add('active');
+    
+    if (scopeState.isOn) drawWaveform();
+}
+
+// 振幅を変更
+function changeSignalAmplitude(amount) {
+    const ch = scopeState.activeChannel;
+    let newAmp = scopeState.signals[ch].amplitude + amount;
+
+    // 制限 (0.5V ～ 10V)
+    if (newAmp < 0.5) newAmp = 0.5;
+    if (newAmp > 10.0) newAmp = 10.0;
+    
+    scopeState.signals[ch].amplitude = newAmp;
+    
+    if (scopeState.isOn) drawWaveform();
+}
+
+// チャンネル切り替え時に、パネルの波形ボタンの見た目を同期させるための関数
+function updateControlPanelUI() {
+    const ch = scopeState.activeChannel;
+    const currentType = scopeState.signals[ch].type;
+    
+    document.querySelectorAll('[id^="btn-wave-"]').forEach(btn => btn.classList.remove('active'));
+    const activeBtn = document.getElementById('btn-wave-' + currentType);
+    if (activeBtn) activeBtn.classList.add('active');
+}
+
+
+
+
 function autoFit() {
     const img = document.querySelector('#model-' + currentModelId + ' img');    
     if (!img || img.naturalWidth === 0) return;
@@ -235,73 +280,125 @@ function drawMenu() {
     });
 }
 
+// 波形描画（複数チャンネル同時表示対応版）
 function drawWaveform() {
+    // 1. 画面クリア
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
+    // 電源OFFなら真っ暗にして終了
     if (!scopeState.isOn) {
         ctx.fillStyle = "black";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         return;
     }
 
+    // 2. グリッドを描く
     drawGrid();
 
-    let currentVoltIndex;
-    if (scopeState.activeChannel === 'CH1') {
-        currentVoltIndex = scopeState.voltIndexCH1;
-    } else {
-        currentVoltIndex = scopeState.voltIndexCH2;
-    }
-
-    const currentVoltDiv = VOLT_STEPS[currentVoltIndex]; // ここで決定
+    // 共通の設定（時間軸など）
     const currentTimeDiv = TIME_STEPS[scopeState.timeIndex];
-
-    // 波形計算
-    ctx.beginPath();
-    ctx.strokeStyle = 'lime';
-    ctx.lineWidth = 2;
-
     const centerY = canvas.height / 2;
-    const pixelsPerGrid = 50; // 1グリッドあたりのピクセル数と仮定
+    const pixelsPerGrid = 50;
 
-    // 振幅計算: 3Vppの信号を入力したと仮定
-    const signalAmplitudeV = 3.0; 
-    const amplitudePx = (signalAmplitudeV / currentVoltDiv) * pixelsPerGrid;
-    const frequency = 50; // 50Hzの信号と仮定
+    // ==========================================
+    // ★変更点: CH1, CH2 を順番にループして描画する
+    // ==========================================
+    const channels = ['CH1', 'CH2'];
 
-    for (let x = 0; x < canvas.width; x++) {
-        const gridX = x / pixelsPerGrid;
-        const time = gridX * currentTimeDiv; // 横軸の時間
+    channels.forEach(ch => {
+        // そのチャンネルの設定値を取得
+        const signal = scopeState.signals[ch];
+        
+        // 電圧軸（Volt/Div）の取得
+        let voltIndex;
+        let color;
+        
+        if (ch === 'CH1') {
+            voltIndex = scopeState.voltIndexCH1;
+            color = 'yellow'; // CH1の色
+        } else {
+            voltIndex = scopeState.voltIndexCH2;
+            color = 'cyan';   // CH2の色
+        }
+        
+        const currentVoltDiv = VOLT_STEPS[voltIndex];
 
-        const y = centerY - Math.sin(2 * Math.PI * frequency * (time + scopeState.timeOffset)) * amplitudePx;
+        // --- 描画開始 ---
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
 
-        if (x === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
+        // 振幅(px) = (信号電圧V / レンジVdiv) * 1グリッドpx
+        const amplitudePx = (signal.amplitude / currentVoltDiv) * pixelsPerGrid;
+        const frequency = signal.frequency; 
 
-    // 数値情報（インジケーター）の描画
-    ctx.fillStyle = "white";
+        for (let x = 0; x < canvas.width; x++) {
+            const gridX = x / pixelsPerGrid;
+            const time = gridX * currentTimeDiv;
+            
+            // 時間オフセット（波が流れるアニメーション）
+            const phase = 2 * Math.PI * frequency * (time + scopeState.timeOffset);
+            
+            let value = 0;
+
+            // 波形の種類による計算
+            if (signal.type === 'sine') {
+                value = Math.sin(phase);
+            } 
+            else if (signal.type === 'square') {
+                value = Math.sin(phase) >= 0 ? 1 : -1;
+            } 
+            else if (signal.type === 'tri') {
+                value = (2 / Math.PI) * Math.asin(Math.sin(phase));
+            }
+
+            // Y座標 (中心Y - 振幅 * 値)
+            const y = centerY - value * amplitudePx;
+
+            if (x === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    });
+
+
+    // ==========================================
+    // ★変更点: 情報表示 (CH1とCH2の両方を表示)
+    // ==========================================
     ctx.font = "bold 16px sans-serif";
-    
-    // 左下: 電圧
     ctx.textAlign = "left";
-    let vText = currentVoltDiv >= 1 ? `${currentVoltDiv.toFixed(2)}V` : `${(currentVoltDiv*1000).toFixed(0)}mV`;
+
+    // --- CH1 の情報 (左下) ---
+    const vDiv1 = VOLT_STEPS[scopeState.voltIndexCH1];
+    const vText1 = vDiv1 >= 1 ? `${vDiv1.toFixed(2)}V` : `${(vDiv1*1000).toFixed(0)}mV`;
     
-    // 文字色を変えると分かりやすい (CH1:黄色, CH2:水色)
-    if (scopeState.activeChannel === 'CH1') {
-        ctx.fillStyle = "yellow";
-        ctx.fillText(`CH1 ${vText}`, 20, canvas.height - 20);
-    } else {
-        ctx.fillStyle = "cyan";
-        ctx.fillText(`CH2 ${vText}`, 20, canvas.height - 20);
-    }
-    // 中央下: 時間
+    // 選択中のチャンネルには「▶」マークをつけるなどの強調
+    let marker1 = (scopeState.activeChannel === 'CH1') ? "▶ " : "   ";
+    
+    ctx.fillStyle = "yellow";
+    ctx.fillText(`${marker1}CH1 ${vText1}`, 20, canvas.height - 20);
+
+
+    // --- CH2 の情報 (CH1の右隣) ---
+    const vDiv2 = VOLT_STEPS[scopeState.voltIndexCH2];
+    const vText2 = vDiv2 >= 1 ? `${vDiv2.toFixed(2)}V` : `${(vDiv2*1000).toFixed(0)}mV`;
+    
+    let marker2 = (scopeState.activeChannel === 'CH2') ? "▶ " : "   ";
+
+    ctx.fillStyle = "cyan";
+    ctx.fillText(`${marker2}CH2 ${vText2}`, 160, canvas.height - 20); // X座標をずらす
+
+
+    // --- 時間軸情報 (中央下) ---
+    ctx.fillStyle = "white";
     ctx.textAlign = "center";
+    
     let tText = currentTimeDiv >= 1 ? `${currentTimeDiv.toFixed(2)}s` : 
                 currentTimeDiv >= 0.001 ? `${(currentTimeDiv*1000).toFixed(2)}ms` : `${(currentTimeDiv*1000000).toFixed(0)}us`;
+    
     ctx.fillText(`M ${tText}`, canvas.width / 2, canvas.height - 20);
 
+    // メニュー描画
     drawMenu();
 }
 
@@ -354,6 +451,16 @@ containers.forEach(container => {
             scopeState.activeChannel = 'CH2';
             scopeState.currentMenu = 'CH2_MENU';
             console.log("操作対象: CH2");
+        }
+        else if (title === 'CH1_MENU' || title === 'Ch1') {
+            scopeState.activeChannel = 'CH1';
+            scopeState.currentMenu = 'CH1_MENU';
+            updateControlPanelUI(); // ★追加: パネルの表示をCH1用に更新
+        }
+        else if (title === 'CH2_MENU' || title === 'Ch2') {
+            scopeState.activeChannel = 'CH2';
+            scopeState.currentMenu = 'CH2_MENU';
+            updateControlPanelUI(); // ★追加: パネルの表示をCH2用に更新
         }
 
 

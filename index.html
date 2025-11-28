@@ -8,10 +8,12 @@
 </head>
 <body>
 
+<!-- ========================================== -->
 <!-- コントロールパネル -->
+<!-- ========================================== -->
 <div class="control-panel">
     
-    <!-- 左側：モデル切り替え -->
+    <!-- 1. モデル切り替えグループ -->
     <div class="control-group">
         <span class="panel-label">MODEL SELECT</span>
         <div class="button-group">
@@ -23,7 +25,7 @@
     <!-- 区切り線 -->
     <div class="panel-divider"></div>
 
-    <!-- 右側：ズーム操作 -->
+    <!-- 2. ズーム操作グループ -->
     <div class="control-group">
         <span class="panel-label">VIEW SCALE</span>
         <div class="zoom-controls">
@@ -32,6 +34,28 @@
                 <span id="zoom-display">100%</span>
             </div>
             <button class="panel-btn icon-btn" onclick="changeZoom(10)">＋</button>
+        </div>
+    </div>
+
+    <!-- 区切り線 -->
+    <div class="panel-divider"></div>
+
+    <!-- 3. 信号操作グループ (新規追加) -->
+    <div class="control-group">
+        <span class="panel-label">SIGNAL GEN</span>
+        
+        <!-- 波形切り替え -->
+        <div class="button-group" style="margin-bottom: 4px;">
+            <button class="panel-btn active" id="btn-wave-sine" onclick="setWaveType('sine')">Sine</button>
+            <button class="panel-btn" id="btn-wave-square" onclick="setWaveType('square')">Square</button>
+            <button class="panel-btn" id="btn-wave-tri" onclick="setWaveType('tri')">Tri</button>
+        </div>
+
+        <!-- 振幅調整 -->
+        <div class="button-group">
+            <span style="font-size:10px; color:#aaa; margin-right:5px;">AMP:</span>
+            <button class="panel-btn icon-btn" onclick="changeSignalAmplitude(-0.5)">－</button>
+            <button class="panel-btn icon-btn" onclick="changeSignalAmplitude(0.5)">＋</button>
         </div>
     </div>
     
