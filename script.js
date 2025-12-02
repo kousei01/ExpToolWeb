@@ -33,21 +33,59 @@ const scopeState = {
 };
 
 // メニューの内容データ
-const menuData = {
+// --- ★変更: Hantek用のメニュー定義 (DSO5000/2000系を想定) ---
+const menuDataHantek = {
     "CH1_MENU": {
-        title: "CH1 SETTING",
-        items: ["Coupling: DC", "BW Limit: Off", "Probe: 1X", "Invert: Off", "Volts/Div: Coarse"]
+        title: "CH1", // HantekはシンプルにCH1と出る
+        items: [
+            "Coupling: DC",      // カップリング
+            "BW Limit: Off",     //帯域制限
+            "Volts/Div: Coarse", // 感度調整
+            "Probe: 10X",        // プローブ減衰比
+            "Invert: Off",       // 反転
+            "Next Page"          // 次ページがあるのが特徴
+        ]
     },
     "CH2_MENU": {
-        title: "CH2 SETTING",
-        items: ["Coupling: AC", "BW Limit: On", "Probe: 10X", "Invert: Off", "Volts/Div: Fine"]
+        title: "CH2",
+        items: ["Coupling: AC", "BW Limit: Off", "Volts/Div: Coarse", "Probe: 10X", "Invert: Off", "Next Page"]
     },
     "Measure": {
         title: "MEASURE",
-        items: ["Source: CH1", "Type: Vpp", "Type: Freq", "Type: Period", "Clear: All"]
+        items: ["Source: CH1", "Type: Voltage", "Type: Time", "Clear: None", "Window: Main"]
+    },
+    "Acquire": {
+        title: "ACQUIRE",
+        items: ["Mode: Sample", "Peak Detect", "Average", "Averages: 4", "Sa Rate: 500MSa"]
     }
 };
 
+// --- ★変更: Agilent (Keysight)用のメニュー定義 (InfiniiVision系を想定) ---
+const menuDataAgilent = {
+    "CH1_MENU": {
+        title: "Vertical (CH1)", // Agilentは少し詳細
+        items: [
+            "Coupling: DC",
+            "Imped: 1M Ohm",     // インピーダンス設定がある
+            "BW Limit: Off",
+            "Vernier: Off",      // 微調整をVernierと呼ぶ
+            "Probe",             // 押してサブメニューを開く形式
+            "Invert: Off"
+        ]
+    },
+    "CH2_MENU": {
+        title: "Vertical (CH2)",
+        items: ["Coupling: DC", "Imped: 1M Ohm", "BW Limit: Off", "Vernier: Off", "Probe", "Invert: Off"]
+    },
+    "Measure": {
+        title: "Measure Menu",
+        items: ["Source: 1", "Type: Frequency", "Settings", "Clear Meas", "Statistics", "Thresholds"]
+    },
+    "Acquire": {
+        title: "Acquire Menu",
+        items: ["Mode: Normal", "Peak Detect", "Averaging", "High Res", "Segmneted"] // Agilent特有のHigh Resなど
+    }
+};
 // ボタン説明文
 const descriptions = {
     "電源ボタン": "電源をオン・オフします。",
@@ -247,40 +285,166 @@ function drawGrid() {
     }
 }
 
+// メニュー描画（モデル別リアルUI対応版）
+// メニュー描画（機種別データ対応版）
 function drawMenu() {
+    // メニューが開いていない、または電源OFFなら描画しない
     if (!scopeState.currentMenu || !scopeState.isOn) return;
-    const key = scopeState.currentMenu;
-    const data = menuData[key];
-    if (!data) return;
 
-    const menuWidth = 140;
+    const key = scopeState.currentMenu;
+    let data;
+
+    // ★変更: 現在のモデルに合わせてデータソースを切り替える
+    if (currentModelId === 'hantek') {
+        data = menuDataHantek[key];
+        if (data) drawMenuHantek(data);
+    } 
+    else if (currentModelId === 'agilent') {
+        data = menuDataAgilent[key];
+        // Agilentの場合、CH1_MENUなどのキーが共通でも中身があるか確認
+        if (data) drawMenuAgilent(data);
+    }
+}
+// --- Hantek風のメニュー描画 ---
+// 特徴: 青っぽい背景、独立したボタン風のボックス
+function drawMenuHantek(data) {
+    const menuWidth = 100;
     const menuX = canvas.width - menuWidth; 
 
-    ctx.fillStyle = "rgba(0, 0, 50, 0.85)";
+    // 1. メニュー全体の背景 (画面右端の帯)
+    // Hantekは薄い青色の帯があることが多い
+    ctx.fillStyle = "rgba(0, 50, 100, 0.8)";
     ctx.fillRect(menuX, 0, menuWidth, canvas.height);
-    ctx.strokeStyle = "#888";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(menuX, 0, menuWidth, canvas.height);
-
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 16px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(data.title, menuX + (menuWidth / 2), 30);
     
-    ctx.beginPath(); ctx.moveTo(menuX, 40); ctx.lineTo(canvas.width, 40); ctx.stroke();
+    // 2. タイトルエリア (一番上)
+    ctx.fillStyle = "#002d5c"; // 濃い紺色
+    ctx.fillRect(menuX + 2, 2, menuWidth - 4, 40);
+    
+    ctx.fillStyle = "white";
+    ctx.font = "bold 14px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(data.title, menuX + (menuWidth / 2), 25);
 
-    ctx.font = "13px sans-serif";
-    const stepY = (canvas.height - 50) / 5;
+    // 3. 各項目の描画 (F1～F5ボタンの位置に合わせる)
+    // Hantekの実機画像を見ると、ボタンは等間隔に並んでいる
+    // 画面の高さ(360px)から、上部の余白を除いて配置
+    
+    const startY = 60; // 最初のボタンのY位置
+    const buttonHeight = 50; // ボタンの高さ
+    const gap = 10; // ボタン間の隙間
+
+    ctx.font = "12px sans-serif";
+
     data.items.forEach((item, index) => {
-        const boxY = 50 + (index * stepY);
-        ctx.fillStyle = "#444";
-        ctx.fillRect(menuX + 5, boxY, menuWidth - 10, 40);
-        ctx.fillStyle = "#fff";
-        ctx.fillText(item, menuX + (menuWidth / 2), boxY + 25);
+        // 5個までしか表示できない (F1-F5)
+        if (index >= 5) return;
+
+        const boxY = startY + index * (buttonHeight + gap);
+        
+        // ボタンの背景 (角丸四角形風)
+        ctx.fillStyle = "#004080"; // 明るめの紺色
+        ctx.strokeStyle = "#4da6ff"; // 水色の枠線
+        ctx.lineWidth = 1;
+
+        ctx.beginPath();
+        ctx.rect(menuX + 5, boxY, menuWidth - 10, buttonHeight);
+        ctx.fill();
+        ctx.stroke();
+
+        // テキスト (2行に分割する簡易処理)
+        ctx.fillStyle = "white";
+        const parts = item.split(": ");
+        if (parts.length > 1) {
+            // "Type: Sine" のようにコロンがある場合、2行にする
+            ctx.fillText(parts[0], menuX + (menuWidth / 2), boxY + 20);
+            ctx.fillStyle = "yellow"; // 値の部分は黄色に
+            ctx.fillText(parts[1], menuX + (menuWidth / 2), boxY + 38);
+        } else {
+            // 1行の場合
+            ctx.fillStyle = "white";
+            ctx.fillText(item, menuX + (menuWidth / 2), boxY + 30);
+        }
     });
 }
 
-// 波形描画（複数チャンネル同時表示対応版）
+// --- Agilent (Keysight)風のメニュー描画 ---
+// 特徴: 画面下部に横並び、チャンネルごとに色が変化
+function drawMenuAgilent(data) {
+    const menuHeight = 65; 
+    const menuY = canvas.height - menuHeight;
+
+    // 1. 背景 (半透明の黒)
+    ctx.fillStyle = "rgba(0, 0, 0, 0.9)"; // 少し濃くしました
+    ctx.fillRect(0, menuY, canvas.width, menuHeight);
+    
+    // --- ★追加: チャンネルごとの色決定ロジック ---
+    let themeColor = "#ccc"; // デフォルト（グレー）
+    const menuKey = scopeState.currentMenu;
+
+    if (menuKey === 'CH1_MENU') {
+        themeColor = "yellow"; // CH1選択時は黄色
+    } else if (menuKey === 'CH2_MENU') {
+        themeColor = "cyan";   // CH2選択時は水色
+    }
+
+    // 上部の境界線 (テーマカラーにする)
+    ctx.strokeStyle = themeColor;
+    ctx.lineWidth = 2; // 少し太くして強調
+    ctx.beginPath();
+    ctx.moveTo(0, menuY);
+    ctx.lineTo(canvas.width, menuY);
+    ctx.stroke();
+
+    // 2. 左端にタイトルを表示 (実機っぽく)
+    // Agilentは一番左に現在のメニュー名が出ることが多いです
+    ctx.fillStyle = themeColor;
+    ctx.font = "bold 14px 'Segoe UI', sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(data.title, 10, menuY - 10); // メニューバーの少し上に表示
+
+
+    // 3. 各項目の描画
+    const buttonCount = 6;
+    const itemWidth = canvas.width / buttonCount;
+
+    ctx.font = "bold 12px 'Segoe UI', sans-serif";
+
+    data.items.forEach((item, index) => {
+        if (index >= buttonCount) return;
+
+        const itemX = index * itemWidth;
+
+        // 区切り線
+        if (index > 0) {
+            ctx.strokeStyle = "#555";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(itemX, menuY);
+            ctx.lineTo(itemX, canvas.height);
+            ctx.stroke();
+        }
+
+        const parts = item.split(": ");
+        ctx.textAlign = "center";
+
+        if (parts.length > 1) {
+            // 上段: ラベル
+            ctx.fillStyle = "#bbb"; 
+            ctx.font = "12px sans-serif";
+            ctx.fillText(parts[0], itemX + (itemWidth / 2), menuY + 22);
+            
+            // 下段: 設定値 (★テーマカラーで強調)
+            ctx.fillStyle = themeColor; 
+            ctx.font = "bold 14px sans-serif";
+            ctx.fillText(parts[1], itemX + (itemWidth / 2), menuY + 48);
+        } else {
+            // 1行のみ
+            ctx.fillStyle = "white"; // 共通項目は白のまま
+            ctx.font = "bold 13px sans-serif";
+            ctx.fillText(item, itemX + (itemWidth / 2), menuY + 38);
+        }
+    });
+}
 function drawWaveform() {
     // 1. 画面クリア
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -363,7 +527,7 @@ function drawWaveform() {
 
 
     // ==========================================
-    // ★変更点: 情報表示 (CH1とCH2の両方を表示)
+    // 情報表示 (CH1とCH2の両方を表示)
     // ==========================================
     ctx.font = "bold 16px sans-serif";
     ctx.textAlign = "left";
@@ -419,53 +583,96 @@ const containers = document.querySelectorAll('.instrument-container');
 containers.forEach(container => {
     
     // --- クリックイベント ---
+// --- クリックイベント (ボタン操作) ---
     container.addEventListener('click', function(e) {
+        // 非表示のモデルでのクリックは無視
         if (container.style.display === 'none') return;
         
+        // ホットスポット（透明ボタン）以外のクリックは無視
         let target = e.target;
         if (!target.classList.contains('hotspot')) return;
-        const title = target.title;
 
+        const title = target.title; // 例: "電源ボタン", "CH1_MENU", "Measure"
+
+        // [A] 電源ボタンの処理
         if (title === '電源ボタン') {
-            target.classList.toggle('active');
+            target.classList.toggle('active'); // activeクラスの付け外し
+            
+            // 電源状態を更新
             scopeState.isOn = target.classList.contains('active');
+            
             if (scopeState.isOn) {
                 scopeState.isRunning = true;
-                scopeState.currentMenu = 'CH1_MENU'; // 電源ONでメニュー表示
+                
+                // 電源ON時の初期状態設定
+                scopeState.activeChannel = 'CH1';  // CH1を選択状態に
+                scopeState.currentMenu = 'CH1_MENU'; // メニューも開く
+                
+                updateControlPanelUI(); // コントロールパネルの表示を同期
             } else {
+                // 電源OFF時はメニューを閉じる
                 scopeState.currentMenu = null;
             }
         }
-        else if (menuData[title] && scopeState.isOn) {
-            scopeState.currentMenu = (scopeState.currentMenu === title) ? null : title;
-        }
-        else if (title === 'RunStop') {
-            scopeState.isRunning = !scopeState.isRunning;
-        }
-        else if (title === 'CH1_MENU' || title === 'Ch1') { // Ch1端子クリックでも可とする場合
-            scopeState.activeChannel = 'CH1';
-            scopeState.currentMenu = 'CH1_MENU'; // ついでにメニューも開く
-            console.log("操作対象: CH1");
-        }
-        else if (title === 'CH2_MENU' || title === 'Ch2') {
-            scopeState.activeChannel = 'CH2';
-            scopeState.currentMenu = 'CH2_MENU';
-            console.log("操作対象: CH2");
-        }
+        
+        // [B] チャンネル選択 & メニュー表示 (CH1)
         else if (title === 'CH1_MENU' || title === 'Ch1') {
-            scopeState.activeChannel = 'CH1';
-            scopeState.currentMenu = 'CH1_MENU';
-            updateControlPanelUI(); // ★追加: パネルの表示をCH1用に更新
+            if (!scopeState.isOn) return; // 電源OFFなら何もしない
+
+            scopeState.activeChannel = 'CH1';    // 操作対象をCH1に
+            scopeState.currentMenu = 'CH1_MENU'; // メニューを開く
+            
+            updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
         }
+        
+        // [C] チャンネル選択 & メニュー表示 (CH2)
         else if (title === 'CH2_MENU' || title === 'Ch2') {
-            scopeState.activeChannel = 'CH2';
-            scopeState.currentMenu = 'CH2_MENU';
-            updateControlPanelUI(); // ★追加: パネルの表示をCH2用に更新
+            if (!scopeState.isOn) return;
+
+            scopeState.activeChannel = 'CH2';    // 操作対象をCH2に
+            scopeState.currentMenu = 'CH2_MENU'; // メニューを開く
+            
+            updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
         }
+        
+        // [D] その他の汎用メニューボタン (Measure, Acquire, Utilityなど)
+        else {
+            // 現在のモデルに対応したメニューデータが存在するかチェック
+            let isMenuButton = false;
+            
+            if (currentModelId === 'hantek' && menuDataHantek[title]) {
+                isMenuButton = true;
+            } else if (currentModelId === 'agilent' && menuDataAgilent[title]) {
+                isMenuButton = true;
+            }
 
-
+            // メニューボタンかつ電源ONなら処理
+            if (isMenuButton && scopeState.isOn) {
+                // すでに同じメニューが開いていれば閉じる、違えば開く
+                if (scopeState.currentMenu === title) {
+                    scopeState.currentMenu = null;
+                } else {
+                    scopeState.currentMenu = title;
+                }
+            }
+            
+            // [E] Run/Stopボタン
+            else if (title === 'RunStop') {
+                scopeState.isRunning = !scopeState.isRunning;
+            }
+            
+            // [F] AutoSetボタン (簡易リセット機能)
+            else if (title === 'AutoSet' && scopeState.isOn) {
+                // 適当に見やすい値にリセットする演出
+                scopeState.voltIndexCH1 = 6; // 1.0V
+                scopeState.voltIndexCH2 = 6; // 1.0V
+                scopeState.timeIndex = 6;    // 0.1s
+                scopeState.timeOffset = 0;
+                scopeState.currentMenu = null;
+                console.log("AutoSet executed");
+            }
+        }
     });
-
     // --- マウスホイールイベント (ツマミ用) ---
     // ここがループの内側にあることが重要です！
     container.addEventListener('wheel', function(e) {
