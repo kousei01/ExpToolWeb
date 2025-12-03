@@ -773,3 +773,151 @@ containers.forEach(container => {
 
 // アプリケーション開始
 animationLoop();
+
+// =======================================================================
+//  実技テストモード機能
+// =======================================================================
+
+// テストの状態管理
+let testState = {
+    active: false,
+    currentQuestionIndex: 0
+};
+
+// --- 問題データの定義 ---
+// setup: 問題開始時にオシロの設定をわざと狂わせる関数
+// check: ユーザーの設定が正しいか判定する関数 (trueなら正解)
+const quizData = [
+    {
+        id: 1,
+        text: "【第1問】CH1の波形が画面からはみ出しています。<br>電圧レンジ(Volts/Div)を調整して、波形全体が見えるように「2.00V」に設定してください。",
+        setup: function() {
+            // 初期設定: わざと拡大しすぎてはみ出させる
+            scopeState.isOn = true;
+            scopeState.activeChannel = 'CH1';
+            scopeState.voltIndexCH1 = 3; // 0.1V (はみ出す設定)
+            scopeState.signals['CH1'].type = 'sine';
+            scopeState.signals['CH1'].amplitude = 3.0; // 振幅3V
+            drawWaveform();
+        },
+        check: function() {
+            // 正解条件: CH1の電圧インデックスが 2.0V (Index=7) になっていること
+            // VOLT_STEPS = [0.01, ..., 1.0(6), 2.0(7), ...]
+            return VOLT_STEPS[scopeState.voltIndexCH1] === 2.0;
+        },
+        hint: "ヒント: 画像上の「電圧ツマミ」の上でマウスホイールを手前に回すと、レンジが広がります。"
+    },
+    {
+        id: 2,
+        text: "【第2問】波形の周期が細かすぎて見づらい状態です。<br>時間軸(Time/Div)を調整して、ゆったり見えるように「5.00ms」に設定してください。",
+        setup: function() {
+            // 初期設定: 時間軸を細かくしすぎる
+            scopeState.timeIndex = 2; // 0.005ms
+            drawWaveform();
+        },
+        check: function() {
+            // 正解条件: 時間軸が 5ms (0.005s)
+            // TIME_STEPS配列の中から 0.005 を探すか、値を直接比較
+            const currentT = TIME_STEPS[scopeState.timeIndex];
+            // 浮動小数点計算の誤差を考慮して差分で比較するのが安全
+            return Math.abs(currentT - 0.005) < 0.0001;
+        },
+        hint: "ヒント: 右上の「時間ツマミ」を操作してください。"
+    },
+    {
+        id: 3,
+        text: "【第3問】CH2に切り替えて、入力信号を「矩形波(Square)」に変更してください。",
+        setup: function() {
+            // 初期設定: CH1に戻す
+            scopeState.activeChannel = 'CH1';
+            drawWaveform();
+            updateControlPanelUI(); // パネル表示も戻す
+        },
+        check: function() {
+            // 正解条件: 操作対象がCH2 かつ 信号タイプが square
+            return scopeState.activeChannel === 'CH2' && 
+                   scopeState.signals['CH2'].type === 'square';
+        },
+        hint: "ヒント: まずCH2ボタンを押し、次にコントロールパネルのSquareボタンを押します。"
+    },
+    {
+        id: 4,
+        text: "【最終問題】波形の動きを止めて(STOP状態にして)ください。",
+        setup: function() {
+            scopeState.isRunning = true;
+        },
+        check: function() {
+            return scopeState.isRunning === false;
+        },
+        hint: "ヒント: 右上の「Run/Stop」ボタンを押します。"
+    }
+];
+
+// --- テスト制御関数 ---
+
+function startTestMode() {
+    testState.active = true;
+    testState.currentQuestionIndex = 0;
+    
+    // パネルを表示
+    document.getElementById('test-panel').style.display = 'block';
+    
+    // 第1問を表示
+    showQuestion();
+    
+    // 画面位置へスクロール
+    document.getElementById('test-panel').scrollIntoView({behavior: "smooth"});
+}
+
+function showQuestion() {
+    const q = quizData[testState.currentQuestionIndex];
+    
+    // 問題文セット
+    document.getElementById('question-text').innerHTML = q.text;
+    document.getElementById('question-counter').innerText = `Q ${testState.currentQuestionIndex + 1} / ${quizData.length}`;
+    
+    // フィードバックリセット
+    const fb = document.getElementById('test-feedback');
+    fb.innerHTML = "";
+    fb.className = "";
+    
+    // ボタン状態リセット
+    document.getElementById('btn-check-answer').style.display = 'inline-block';
+    document.getElementById('btn-next-question').style.display = 'none';
+
+    // ★重要: 問題ごとの初期状態（セットアップ）を実行
+    if (q.setup) {
+        q.setup();
+        updateControlPanelUI(); // UIの同期
+    }
+}
+
+function checkTestAnswer() {
+    const q = quizData[testState.currentQuestionIndex];
+    const fb = document.getElementById('test-feedback');
+    
+    // 判定ロジック実行
+    const isCorrect = q.check();
+    
+    if (isCorrect) {
+        fb.innerHTML = "正解です！素晴らしい！";
+        fb.className = "feedback-correct";
+        
+        // 「解答」ボタンを隠して「次へ」ボタンを表示
+        document.getElementById('btn-check-answer').style.display = 'none';
+        
+        if (testState.currentQuestionIndex < quizData.length - 1) {
+            document.getElementById('btn-next-question').style.display = 'inline-block';
+        } else {
+            fb.innerHTML += "<br>すべてのテストが終了しました！";
+        }
+    } else {
+        fb.innerHTML = "不正解です。<br>" + q.hint;
+        fb.className = "feedback-wrong";
+    }
+}
+
+function nextQuestion() {
+    testState.currentQuestionIndex++;
+    showQuestion();
+}

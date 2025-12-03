@@ -58,8 +58,28 @@
             <button class="panel-btn icon-btn" onclick="changeSignalAmplitude(0.5)">＋</button>
         </div>
     </div>
+
+    <div style="text-align:center; margin-bottom:10px;">
+        <button class="panel-btn active" style="background:#e74c3c; border-color:#c0392b;" onclick="startTestMode()">★ 実技テストを開始する</button>
+    </div>
     
 </div>
+
+<div id="test-panel" class="test-panel" style="display:none;">
+    <div class="test-header">
+        <h3>実技試験モード</h3>
+        <span id="question-counter">Q 1 / 3</span>
+    </div>
+    <div class="test-body">
+        <p id="question-text">ここに問題が表示されます。</p>
+        <div id="test-feedback"></div>
+    </div>
+    <div class="test-footer">
+        <button id="btn-check-answer" class="panel-btn" onclick="checkTestAnswer()">解答する</button>
+        <button id="btn-next-question" class="panel-btn" style="display:none;" onclick="nextQuestion()">次の問題へ</button>
+    </div>
+</div>
+
 
 <!-- メインステージ（ここが重要：オシロスコープ表示エリア） -->
 <div class="main-stage">
@@ -96,7 +116,8 @@
             <area target="" alt="Ch1" title="Ch1" coords="861,683,18" shape="circle">
             <area target="" alt="Ch2" title="Ch2" coords="992,684,18" shape="circle">
             <area target="" alt="電圧調整" title="KNOB_VOLT" href="" coords="861,583,30" shape="circle">
-            <area target="" alt="時間調整" title="KNOB_TIME" href="" coords="991,582,31" shape="circle">        </map>
+            <area target="" alt="時間調整" title="KNOB_TIME" href="" coords="991,582,31" shape="circle">
+        </map>
     </div>
 
     <!-- ========================================== -->
