@@ -28,8 +28,16 @@ const scopeState = {
 
     signals: {
         'CH1': { type: 'sine', amplitude: 2.0, frequency: 50 }, // 初期値: 正弦波, 2V
-        'CH2': { type: 'sine', amplitude: 2.0, frequency: 50 }  // 初期値: 正弦波, 2V
+        'CH2': { type: 'sine', amplitude: 2.0, frequency: 50 },  // 初期値: 正弦波, 2V
+    },
+
+    ad_da: {
+        mode: true,          // AD/DAモードかどうか
+        resolution: 8,       // ビット数 (4 or 8)
+        samplingPeriod: 5,   // サンプリング周期 [µs] (5 ~ 500)
+        inputFreq: 1000      // 入力周波数 [Hz]
     }
+
 };
 
 // メニューの内容データ
@@ -445,8 +453,11 @@ function drawMenuAgilent(data) {
         }
     });
 }
+// =======================================================================
+//  波形描画関数 (複数ch同時表示・AC/DC再現・信号操作対応版)
+// =======================================================================
 function drawWaveform() {
-    // 1. 画面クリア
+    // 1. 画面をクリア
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
     // 電源OFFなら真っ暗にして終了
@@ -456,68 +467,83 @@ function drawWaveform() {
         return;
     }
 
-    // 2. グリッドを描く
+    // 2. 背景グリッドを描く
     drawGrid();
 
-    // 共通の設定（時間軸など）
+    // 共通の描画パラメータ
     const currentTimeDiv = TIME_STEPS[scopeState.timeIndex];
     const centerY = canvas.height / 2;
-    const pixelsPerGrid = 50;
+    const pixelsPerGrid = 50; // 1グリッド = 50pxと仮定
 
     // ==========================================
-    // ★変更点: CH1, CH2 を順番にループして描画する
+    // 3. CH1, CH2 の波形を順番に描画 (ループ処理)
     // ==========================================
     const channels = ['CH1', 'CH2'];
 
     channels.forEach(ch => {
-        // そのチャンネルの設定値を取得
+        // そのチャンネルの信号データと設定を取得
         const signal = scopeState.signals[ch];
         
-        // 電圧軸（Volt/Div）の取得
         let voltIndex;
         let color;
-        
+        let coupling; // ACかDCか (シミュレーション用)
+
         if (ch === 'CH1') {
             voltIndex = scopeState.voltIndexCH1;
-            color = 'yellow'; // CH1の色
+            color = 'yellow'; // CH1は黄色
+            coupling = 'DC';  // CH1はDC結合 (オフセット有効)
         } else {
             voltIndex = scopeState.voltIndexCH2;
-            color = 'cyan';   // CH2の色
+            color = 'cyan';   // CH2は水色
+            coupling = 'AC';  // CH2はAC結合 (オフセット無視)
         }
         
         const currentVoltDiv = VOLT_STEPS[voltIndex];
+
+        // --- カップリングによるオフセット処理 ---
+        // DCなら設定されたoffset(直流成分)を反映、ACなら0にする
+        let effectiveOffset = (coupling === 'AC') ? 0 : (signal.offset || 0);
 
         // --- 描画開始 ---
         ctx.beginPath();
         ctx.strokeStyle = color;
         ctx.lineWidth = 2;
 
-        // 振幅(px) = (信号電圧V / レンジVdiv) * 1グリッドpx
+        // 振幅(px) = (信号電圧 / レンジ) * 1グリッドpx
         const amplitudePx = (signal.amplitude / currentVoltDiv) * pixelsPerGrid;
+        
+        // オフセット(px) = (直流成分 / レンジ) * 1グリッドpx
+        // ※プラス電圧で波形は上にいくのでマイナスを掛ける(Canvasは下がプラス)
+        const offsetPx = (effectiveOffset / currentVoltDiv) * pixelsPerGrid;
+
         const frequency = signal.frequency; 
 
         for (let x = 0; x < canvas.width; x++) {
+            // 時間軸の計算
             const gridX = x / pixelsPerGrid;
             const time = gridX * currentTimeDiv;
             
-            // 時間オフセット（波が流れるアニメーション）
+            // 位相計算 (timeOffsetで波を流す)
             const phase = 2 * Math.PI * frequency * (time + scopeState.timeOffset);
             
             let value = 0;
 
             // 波形の種類による計算
             if (signal.type === 'sine') {
+                // 正弦波
                 value = Math.sin(phase);
             } 
             else if (signal.type === 'square') {
+                // 矩形波
                 value = Math.sin(phase) >= 0 ? 1 : -1;
             } 
             else if (signal.type === 'tri') {
+                // 三角波
                 value = (2 / Math.PI) * Math.asin(Math.sin(phase));
             }
 
-            // Y座標 (中心Y - 振幅 * 値)
-            const y = centerY - value * amplitudePx;
+            // Y座標決定: 中心 - (波形の振幅) - (直流オフセット)
+            const y = centerY - (value * amplitudePx) - offsetPx;
 
             if (x === 0) ctx.moveTo(x, y);
             else ctx.lineTo(x, y);
@@ -525,47 +551,54 @@ function drawWaveform() {
         ctx.stroke();
     });
 
-
     // ==========================================
-    // 情報表示 (CH1とCH2の両方を表示)
+    // 4. 画面上のテキスト情報 (インジケーター)
     // ==========================================
     ctx.font = "bold 16px sans-serif";
     ctx.textAlign = "left";
 
-    // --- CH1 の情報 (左下) ---
+    // --- CH1 情報 (左下) ---
     const vDiv1 = VOLT_STEPS[scopeState.voltIndexCH1];
     const vText1 = vDiv1 >= 1 ? `${vDiv1.toFixed(2)}V` : `${(vDiv1*1000).toFixed(0)}mV`;
     
-    // 選択中のチャンネルには「▶」マークをつけるなどの強調
+    // 操作中のチャンネルに「▶」マークをつける
     let marker1 = (scopeState.activeChannel === 'CH1') ? "▶ " : "   ";
-    
+    // 信号情報 (例: Sine 2.0V)
+    const sig1 = scopeState.signals['CH1'];
+    const info1 = `(${sig1.type} ${sig1.amplitude.toFixed(1)}V)`;
+
     ctx.fillStyle = "yellow";
-    ctx.fillText(`${marker1}CH1 ${vText1}`, 20, canvas.height - 20);
+    ctx.fillText(`${marker1}CH1 ${vText1} ${info1}`, 20, canvas.height - 20);
 
 
-    // --- CH2 の情報 (CH1の右隣) ---
+    // --- CH2 情報 (CH1の右隣) ---
     const vDiv2 = VOLT_STEPS[scopeState.voltIndexCH2];
     const vText2 = vDiv2 >= 1 ? `${vDiv2.toFixed(2)}V` : `${(vDiv2*1000).toFixed(0)}mV`;
     
     let marker2 = (scopeState.activeChannel === 'CH2') ? "▶ " : "   ";
+    const sig2 = scopeState.signals['CH2'];
+    const info2 = `(${sig2.type} ${sig2.amplitude.toFixed(1)}V)`;
 
     ctx.fillStyle = "cyan";
-    ctx.fillText(`${marker2}CH2 ${vText2}`, 160, canvas.height - 20); // X座標をずらす
+    // 表示位置が重ならないようにX座標をずらす (260px付近)
+    ctx.fillText(`${marker2}CH2 ${vText2} ${info2}`, 260, canvas.height - 20);
 
 
-    // --- 時間軸情報 (中央下) ---
+    // --- 時間軸 情報 (中央下) ---
     ctx.fillStyle = "white";
     ctx.textAlign = "center";
     
     let tText = currentTimeDiv >= 1 ? `${currentTimeDiv.toFixed(2)}s` : 
                 currentTimeDiv >= 0.001 ? `${(currentTimeDiv*1000).toFixed(2)}ms` : `${(currentTimeDiv*1000000).toFixed(0)}us`;
     
+    // 画面幅の中央に配置
     ctx.fillText(`M ${tText}`, canvas.width / 2, canvas.height - 20);
 
-    // メニュー描画
+    // ==========================================
+    // 5. メニューの描画 (一番手前)
+    // ==========================================
     drawMenu();
 }
-
 function animationLoop() {
     if (scopeState.isOn && scopeState.isRunning) {
         scopeState.timeOffset -= 0.0001; 
@@ -826,19 +859,23 @@ const quizData = [
     },
     {
         id: 3,
-        text: "【第3問】CH2に切り替えて、入力信号を「矩形波(Square)」に変更してください。",
+        text: "【第3問: エイリアス】<br>サンプリング周期を「200µs」、入力周波数を「4kHz」に設定してください。<br>※5kHzでサンプリングしているため、4kHzの信号は折り返されて「1kHz」の波形のように見えるはずです。",
         setup: function() {
-            // 初期設定: CH1に戻す
             scopeState.activeChannel = 'CH1';
-            drawWaveform();
-            updateControlPanelUI(); // パネル表示も戻す
+            // 初期状態: サンプリング200µs, 入力1kHz (正常に表示される)
+            scopeState.ad_da.mode = true;
+            scopeState.ad_da.samplingPeriod = 200;
+            scopeState.ad_da.inputFreq = 1000;
+            
+            // オシロの表示も見やすいように調整しておく
+            scopeState.timeIndex = 5; // 適当なTime/Div
+            updateControlPanelUI();
         },
         check: function() {
-            // 正解条件: 操作対象がCH2 かつ 信号タイプが square
-            return scopeState.activeChannel === 'CH2' && 
-                   scopeState.signals['CH2'].type === 'square';
+            // 正解: 入力が4kHzになっていること
+            return scopeState.ad_da.inputFreq === 4000 && scopeState.ad_da.samplingPeriod === 200;
         },
-        hint: "ヒント: まずCH2ボタンを押し、次にコントロールパネルのSquareボタンを押します。"
+        hint: "Signal GenパネルでFreqを4kHzに、Samplingを200µsに設定します。"
     },
     {
         id: 4,
