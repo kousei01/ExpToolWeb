@@ -17,8 +17,8 @@
     <div class="control-group">
         <span class="panel-label">MODEL SELECT</span>
         <div class="button-group">
-            <button id="btn-model-hantek" class="panel-btn active" onclick="switchModelUI('hantek')">Hantek</button>
-            <button id="btn-model-agilent" class="panel-btn" onclick="switchModelUI('agilent')">Agilent</button>
+            <button id="btn-model-hantek" class="panel-btn" onclick="switchModelUI('hantek')">Hantek</button>
+            <button id="btn-model-agilent" class="panel-btn active" onclick="switchModelUI('agilent')">Agilent</button>
         </div>
     </div>
 
@@ -87,7 +87,7 @@
     <!-- ========================================== -->
     <!-- モデルA: Hantek -->
     <!-- ========================================== -->
-    <div id="model-hantek" class="instrument-container active-model">
+    <div id="model-hantek" class="instrument-container active-model" style="display: none;">
         <img src="oscilloscope-body.png" alt="Hantekオシロスコープ">
         
         <div id="screen-hantek" class="screen-area">
@@ -123,7 +123,7 @@
     <!-- ========================================== -->
     <!-- モデルB: Agilent -->
     <!-- ========================================== -->
-    <div id="model-agilent" class="instrument-container" style="display: none;">
+    <div id="model-agilent" class="instrument-container active-model">
         <img src="agilent-body.png" alt="Agilentオシロスコープ">
         
         <div id="screen-agilent" class="screen-area">
@@ -139,7 +139,58 @@
             <area target="" alt="RunStop" title="RunStop" coords="1894,103,2007,154" shape="rect">
             <area target="" alt="Single" title="Single" coords="2037,102,2152,153" shape="rect">
             <area target="" alt="時間ツマミ" title="KNOB_TIME" coords="1494,167,41" shape="circle">
-            <area target="" alt="電圧ツマミ" title="KNOB_VOLT" coords="1544,673,36" shape="circle">
+            <area target="" alt="AutoSet" title="AutoSet" href="" coords="2066,205,2124,243" shape="rect">
+            <area target="" alt="Default" title="Default" href="" coords="1920,202,1978,238" shape="rect">
+            <area target="" alt="Horiz" title="Horiz" href="" coords="1567,100,1630,136" shape="rect">
+            <area target="" alt="Search" title="Search" href="" coords="1566,171,1630,209" shape="rect">
+            <area target="" alt="Navigate" title="Navigate" href="" coords="1566,240,1628,278" shape="rect">
+            <area target="" alt="Volt1" title="Volt1" coords="1544,673,36" shape="circle">
+            <area target="" alt="Volt2" title="Volt2" href="" coords="1731,671,38" shape="circle">
+            <area target="" alt="Volt3" title="Volt3" href="" coords="1922,675,38" shape="circle">
+            <area target="" alt="Volt4" title="Volt4" href="" coords="2108,669,38" shape="circle">
+            <area target="" alt="Pos1" title="Pos1" href="" coords="1542,877,27" shape="circle">
+            <area target="" alt="Pos2" title="Pos2" href="" coords="1727,876,27" shape="circle">
+            <area target="" alt="Pos3" title="Pos3" href="" coords="1918,871,28" shape="circle">
+            <area target="" alt="Pos4" title="Pos4" href="" coords="2106,872,28" shape="circle">
+            <area target="" alt="Trigger" title="Trigger" href="" coords="1442,319,1506,355" shape="rect">
+            <area target="" alt="Level" title="Level" href="" coords="1576,376,29" shape="circle">
+            <area target="" alt="Cursr" title="Cursr" href="" coords="1747,318,1807,354" shape="rect">
+            <area target="" alt="Meas" title="Meas" href="" coords="1747,392,1807,428" shape="rect">
+            <area target="" alt="Cursrツマミ" title="Cursrツマミ" href="" coords="1883,376,29" shape="circle">
+            <area target="" alt="Math" title="Math" href="" coords="1972,465,2028,505" shape="rect">
+            <area target="" alt="Serial" title="Serial" href="" coords="1972,314,2032,352" shape="rect">
+            <area target="" alt="Ref" title="Ref" href="" coords="1970,540,2028,576" shape="rect">
+            <area target="" alt="Display" title="Display" href="" coords="1847,467,1910,503" shape="rect">
+            <area target="" alt="Acquire" title="Acquire" href="" coords="1747,463,1807,503" shape="rect">
+            <area target="" alt="SavaRecall" title="SavaRecall" href="" coords="1747,545,1807,577" shape="rect">
+            <area target="" alt="Print" title="Print" href="" coords="1845,545,1912,581" shape="rect">
+            <area target="" alt="Help" title="Help" href="" coords="1791,758,1849,794" shape="rect">
+            <area target="" alt="Soft1" title="Soft1" href="" coords="287,923,351,969" shape="rect">
+            <area target="" alt="Soft2" title="Soft2" href="" coords="462,928,528,966" shape="rect">
+            <area target="" alt="Soft3" title="Soft3" href="" coords="639,927,705,965" shape="rect">
+            <area target="" alt="Soft4" title="Soft4" href="" coords="813,922,883,967" shape="rect">
+            <area target="" alt="Soft5" title="Soft5" href="" coords="992,921,1060,967" shape="rect">
+            <area target="" alt="Soft6" title="Soft6" href="" coords="1165,920,1233,962" shape="rect">
+            <area target="" alt="Back" title="Back" href="" coords="175,948,28" shape="circle">
+            <area target="" alt="Entry" title="Entry" href="" coords="1468,496,26" shape="circle">
+            <area target="" alt="Ch1" title="Ch1" href="" coords="1391,1032,26" shape="circle">
+            <area target="" alt="Ch2" title="Ch2" href="" coords="1612,1029,25" shape="circle">
+            <area target="" alt="Ch3" title="Ch3" href="" coords="1835,1027,28" shape="circle">
+            <area target="" alt="Ch4" title="Ch4" href="" coords="2062,1028,24" shape="circle">
+            <area target="" alt="Zoom" title="Zoom" href="" coords="1693,119,23" shape="circle">
+            <area target="" alt="Navi_L" title="Navi_L" href="" coords="1695,258,24" shape="circle">
+            <area target="" alt="NaviStop" title="NaviStop" href="" coords="1771,257,23" shape="circle">
+            <area target="" alt="Navi_R" title="Navi_R" href="" coords="1847,259,22" shape="circle">
+            <area target="" alt="ForceTrigger" title="ForceTrigger" href="" coords="1707,353,1643,317" shape="rect">
+            <area target="" alt="QuickAction" title="QuickAction" href="" coords="1645,469,1707,507" shape="rect">
+            <area target="" alt="Utility" title="Utility" href="" coords="1542,470,1606,504" shape="rect">
+            <area target="" alt="WavaGen" title="WavaGen" href="" coords="1542,543,1604,581" shape="rect">
+            <area target="" alt="Analyza" title="Analyza" href="" coords="1645,538,1707,580" shape="rect">
+            <area target="" alt="Digital" title="Digital" href="" coords="1970,393,2032,429" shape="rect">
+            <area target="" alt="Label" title="Label" href="" coords="1600,760,1665,798" shape="rect">
+            <area target="" alt="Posツマミ" title="Posツマミ" href="" coords="1777,164,26" shape="circle">
+            <area target="" alt="CursorA" title="CursorA" href="" coords="2114,357,27" shape="circle">
+            <area target="" alt="CursorB" title="CursorB" href="" coords="2114,504,27" shape="circle">
         </map>
     </div>
 
