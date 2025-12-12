@@ -38,7 +38,7 @@ body {
     
     /* 他の設定は以前のままでOK */
     position: relative;
-    display: block;
+    display: inline-block;
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
 }
 

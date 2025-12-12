@@ -747,9 +747,15 @@ containers.forEach(container => {
         // [B] チャンネル選択 & メニュー表示 (CH1)
         else if (title === 'CH1_MENU' || title === 'Ch1') {
             if (!scopeState.isOn) return; // 電源OFFなら何もしない
-
+            if( scopeState.currentMenu === 'CH1_MENU' ) {
+                // すでにCH1メニューが開いている場合は閉じる
+                scopeState.currentMenu = null;
+                updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
+                return;
+            }else{
             scopeState.activeChannel = 'CH1';    // 操作対象をCH1に
             scopeState.currentMenu = 'CH1_MENU'; // メニューを開く
+            }
             
             updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
         }
@@ -757,9 +763,15 @@ containers.forEach(container => {
         // [C] チャンネル選択 & メニュー表示 (CH2)
         else if (title === 'CH2_MENU' || title === 'Ch2') {
             if (!scopeState.isOn) return;
-
+            if( scopeState.currentMenu === 'CH2_MENU' ) {
+                // すでにCH2メニューが開いている場合は閉じる
+                scopeState.currentMenu = null;
+                updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
+                return;
+            }else{
             scopeState.activeChannel = 'CH2';    // 操作対象をCH2に
             scopeState.currentMenu = 'CH2_MENU'; // メニューを開く
+            }
             
             updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
         }
@@ -968,7 +980,7 @@ const quizData = [
         text: "【第2問】波形の周期が細かすぎて見づらい状態です。<br>時間軸(Time/Div)を調整して、ゆったり見えるように「5.00ms」に設定してください。",
         setup: function() {
             // 初期設定: 時間軸を細かくしすぎる
-            scopeState.timeIndex = 2; // 0.005ms
+            scopeState.timeIndex = 6;
             drawWaveform();
         },
         check: function() {
@@ -982,23 +994,26 @@ const quizData = [
     },
     {
         id: 3,
-        text: "【第3問: エイリアス】<br>サンプリング周期を「200µs」、入力周波数を「4kHz」に設定してください。<br>※5kHzでサンプリングしているため、4kHzの信号は折り返されて「1kHz」の波形のように見えるはずです。",
+        text: "【第3問: 信号の切り替え】<br>現在、画面には丸みを帯びた「正弦波(Sine)」が表示されています。<br>左側のコントロールパネルにあるボタンを操作して、入力信号を角張った「矩形波(Square)」に切り替えてください。",
         setup: function() {
+            // 初期設定: 見やすいように調整しつつ、必ずSine波にする
+            scopeState.isOn = true;
             scopeState.activeChannel = 'CH1';
-            // 初期状態: サンプリング200µs, 入力1kHz (正常に表示される)
-            scopeState.ad_da.mode = true;
-            scopeState.ad_da.samplingPeriod = 200;
-            scopeState.ad_da.inputFreq = 1000;
             
-            // オシロの表示も見やすいように調整しておく
-            scopeState.timeIndex = 5; // 適当なTime/Div
-            updateControlPanelUI();
+            scopeState.signals['CH1'].type = 'sine'; // ★ここを正弦波に固定
+            scopeState.signals['CH1'].amplitude = 2.0; 
+            
+            scopeState.voltIndexCH1 = 6; // 1.0V/div (見やすい大きさ)
+            scopeState.timeIndex = 6;    // 0.1s (見やすい周期)
+            
+            updateControlPanelUI(); // パネルのボタン表示を同期
+            drawWaveform();
         },
         check: function() {
-            // 正解: 入力が4kHzになっていること
-            return scopeState.ad_da.inputFreq === 4000 && scopeState.ad_da.samplingPeriod === 200;
+            // 正解条件: CH1の信号タイプが 'square' になっているか
+            return scopeState.signals['CH1'].type === 'square';
         },
-        hint: "Signal GenパネルでFreqを4kHzに、Samplingを200µsに設定します。"
+        hint: "ヒント: 画面左側（CONTROL PANEL）の下の方にある「SIGNAL GEN」エリアを見てください。「Square」というボタンがあります。"
     },
     {
         id: 4,
@@ -1080,4 +1095,17 @@ function checkTestAnswer() {
 function nextQuestion() {
     testState.currentQuestionIndex++;
     showQuestion();
+}
+
+// テストモードを中断して閉じる関数
+function quitTestMode() {
+    // 1. テスト状態を解除
+    testState.active = false;
+    
+    // 2. パネルを非表示にする
+    document.getElementById('test-panel').style.display = 'none';
+
+    // 3. フィードバック（正解・不正解の文字）をリセットしておく
+    document.getElementById('test-feedback').innerHTML = "";
+    document.getElementById('test-feedback').className = "";
 }
