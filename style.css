@@ -235,3 +235,61 @@ body {
 .feedback-wrong {
     color: #e74c3c;
 }
+
+/* --- 説明書画面のスタイル --- */
+.manual-container {
+    width: 100%;
+    min-height: 100%;
+    display: flex;
+    justify-content: center;
+    padding-top: 20px;
+    padding-bottom: 50px;
+}
+
+.manual-paper {
+    background-color: #fff;
+    width: 800px;
+    max-width: 90%;
+    padding: 40px;
+    box-shadow: 0 0 20px rgba(0,0,0,0.1);
+    border-radius: 4px;
+    color: #333;
+    font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+    line-height: 1.6;
+}
+
+.manual-paper h2 {
+    border-bottom: 2px solid #2c3e50;
+    padding-bottom: 10px;
+    margin-bottom: 30px;
+    color: #2c3e50;
+    text-align: center;
+}
+
+.manual-section {
+    margin-bottom: 30px;
+}
+
+.manual-section h3 {
+    background-color: #f0f4f8;
+    padding: 8px 12px;
+    border-left: 5px solid #3498db;
+    color: #2c3e50;
+    margin-bottom: 15px;
+}
+
+.manual-paper ul {
+    list-style-type: disc;
+    padding-left: 20px;
+}
+
+.manual-paper li {
+    margin-bottom: 10px;
+}
+
+.highlight {
+    background-color: #fff3cd;
+    font-weight: bold;
+    padding: 2px 5px;
+    border-radius: 3px;
+}

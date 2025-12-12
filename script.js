@@ -214,11 +214,33 @@ function changeModel(modelName) {
 
 function switchModelUI(modelName) {
     changeModel(modelName);
+    
+    // ボタンのアクティブ表示切替
     document.getElementById('btn-model-hantek').classList.remove('active');
     document.getElementById('btn-model-agilent').classList.remove('active');
+    document.getElementById('btn-manual').classList.remove('active'); // 説明書ボタンもOFFにする
+
     document.getElementById('btn-model-' + modelName).classList.add('active');
+
+    // 説明書を隠す
+    document.getElementById('manual-screen').style.display = 'none';
 }
 
+// 説明書を表示する関数
+function showManual() {
+    // 1. 全てのオシロスコープモデルを隠す
+    document.querySelectorAll('.instrument-container').forEach(el => {
+        el.style.display = 'none';
+    });
+
+    // 2. 説明書エリアを表示
+    document.getElementById('manual-screen').style.display = 'flex';
+
+    // 3. ボタンのアクティブ状態を更新
+    document.getElementById('btn-model-hantek').classList.remove('active');
+    document.getElementById('btn-model-agilent').classList.remove('active');
+    document.getElementById('btn-manual').classList.add('active');
+}
 
 // --- ズーム機能 (完全版: 位置ズレ防止・正確な中央寄せ) ---
 let currentZoom = 100;
@@ -835,8 +857,23 @@ containers.forEach(container => {
 });
 
 
-// --- 6. マップ変換機能 ---
+// --- 6. マップ変換機能（実装済み=青、未実装=赤 に色分け版） ---
 (function convertMapToHotspots() {
+    
+    // ★ここに「機能が実装されている（クリックやホイールで動く）ボタン」の名前を登録します
+    const activeFeatures = [
+        // 電源・基本操作
+        "電源ボタン", "RunStop", "AutoSet", 
+        
+        // チャンネル操作
+        "CH1_MENU", "CH2_MENU", "Ch1", "Ch2",
+        
+        // ツマミ（ホイール操作できるもの）
+        "KNOB_TIME", "KNOB_VOLT",
+        "Volt1", "Volt2", "Volt3", "Volt4",
+        
+    ];
+
     const maps = document.querySelectorAll('map');
     maps.forEach(map => {
         const containerId = map.name.replace('map-', 'model-');
@@ -856,9 +893,23 @@ containers.forEach(container => {
             div.style.position = 'absolute';
             div.style.zIndex = '100';
             div.style.cursor = 'pointer';
-            // 開発用：赤色 (完成時は transparent にする)
-            div.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
 
+            // ★機能の実装状況を判定
+            const isActive = activeFeatures.includes(title) || 
+                             (typeof menuDataHantek !== 'undefined' && menuDataHantek[title]) ||
+                             (typeof menuDataAgilent !== 'undefined' && menuDataAgilent[title]);
+
+            if (isActive) {
+                // 【実装済み】青色
+                div.style.backgroundColor = 'rgba(0, 100, 255, 0.3)';
+                div.style.border = '2px solid rgba(0, 100, 255, 0.6)';
+            } else {
+                // 【未実装】赤色（これで場所がわかり、ツールチップも出ます）
+                div.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
+                div.style.border = '1px dashed rgba(255, 0, 0, 0.6)';
+            }
+
+            // 座標設定
             if (shape === 'rect') {
                 const [x1, y1, x2, y2] = coords;
                 div.style.left = Math.min(x1, x2) + 'px';
@@ -876,9 +927,7 @@ containers.forEach(container => {
             targetContainer.appendChild(div);
         });
     });
-})();
-
-// アプリケーション開始
+})();// アプリケーション開始
 animationLoop();
 
 // =======================================================================
