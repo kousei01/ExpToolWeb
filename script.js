@@ -27,10 +27,13 @@ const scopeState = {
     currentMenu: null, // 表示中のメニュー
 
     trigger: {
-        level: 0.0,       // トリガーレベル (V)
+        level: 4.0,       // トリガーレベル (V)
         slope: 'rising',  // 立ち上がり ('rising') か 立下り ('falling')
         source: 'CH1',    // トリガーソース
-        isTriggered: false // トリガーがかかっているかどうかのフラグ
+        isTriggered: false, // トリガーがかかっているかどうかのフラグ
+
+        lastOffset: 0,   // 最後にトリガが成功したときの位置
+        lossTimer: 0     // トリガを見失ってからの経過フレーム数
     },
 
 
@@ -586,43 +589,64 @@ function getSignalVoltage(ch, t) {
 function calculateTriggerOffset() {
     const source = scopeState.trigger.source;
     const level = scopeState.trigger.level;
-    const freq = scopeState.signals[source].frequency;
+    const signal = scopeState.signals[source];
     
-    // 検索範囲: 1周期分だけ探せば十分
-    const period = 1.0 / freq;
+    // 信号が無い場合はそのまま流す
+    if (!signal) return scopeState.timeOffset;
+
+    const freq = signal.frequency;
+    const period = 1.0 / freq; // 1周期の時間
     
-    // 精度: 1周期を何分割して探すか（多いほど正確だが重くなる）
     const steps = 100; 
     const dt = period / steps;
+    const baseTime = scopeState.timeOffset; 
 
-    // 現在のアニメーションタイム (流れている時間)
-    // これを基準に、一番近い「立ち上がりポイント」を探す
-    const baseTime = Math.abs(scopeState.timeOffset) % period;
-
+    // --- 1. トリガポイントの探索 ---
     for (let i = 0; i < steps * 2; i++) {
-        // 現在地から少しずつ未来へ
-        const t1 = baseTime + (i * dt);
-        const t2 = baseTime + ((i + 1) * dt);
-        
+        const t1 = baseTime - (i * dt);
+        const t2 = baseTime - ((i + 1) * dt);
+
         const v1 = getSignalVoltage(source, t1);
         const v2 = getSignalVoltage(source, t2);
 
-        // 立ち上がり検出 (前がレベルより低く、次がレベル以上)
+        // Rising Edge (立ち上がり) 検出
         if (scopeState.trigger.slope === 'rising') {
-            if (v1 < level && v2 >= level) {
-                // 見つけた！この瞬間の時間を返す
+            if (v2 < level && v1 >= level) {
+                // ★トリガ成功！
                 scopeState.trigger.isTriggered = true;
-                return -t1; // 波形を左にずらすのでマイナス
+                scopeState.trigger.lastOffset = t1; // 位置を記憶
+                scopeState.trigger.lossTimer = 0;   // タイマーリセット
+                return t1;
             }
         }
-        // 立下り検出の場合は不等号を逆にする
+        // Falling Edge なら逆の判定...
     }
     
-    // 見つからなかった場合 (レベルが高すぎるなど)
-    scopeState.trigger.isTriggered = false;
-    return scopeState.timeOffset; // そのまま流す（Autoモード挙動）
-}
+    // --- 2. トリガが見つからなかった場合の処理 (ここが重要) ---
+    
+    // すぐに諦めず、少しの間(例えば60フレーム=約1秒)は
+    // 「前回のトリガ位置」を使い続ける
+    const TIMEOUT_FRAMES = 60; 
 
+    if (scopeState.trigger.lossTimer < TIMEOUT_FRAMES) {
+        // まだ猶予期間中 -> 前回の位置を返して「止まっているように見せる」
+        scopeState.trigger.lossTimer++;
+        
+        // 画面上の表示は "Trig'd?" のようにしても良いが、
+        // 実機に合わせて Trig'd のままか、あるいは点滅させる等の表現になる。
+        // ここではチラつき防止優先で isTriggered = true のまま扱う手もあるが、
+        // 厳密にはトリガしていないので false にしつつ固定表示する。
+        
+        // ユーザー体験的には「止まっている＝トリガ中」と感じるので true 維持でもOK
+        scopeState.trigger.isTriggered = true; 
+        
+        return scopeState.trigger.lastOffset;
+    } else {
+        // 完全にトリガを見失った -> Autoモード（波形を流す）へ移行
+        scopeState.trigger.isTriggered = false;
+        return scopeState.timeOffset; 
+    }
+}
 
 // =======================================================================
 //  【補助関数】信号電圧の計算
@@ -787,15 +811,17 @@ function drawWaveform() {
         ctx.stroke();
     });
 
+// ==========================================
+    // 4. トリガーレベルラインと矢印の描画
     // ==========================================
-    // 4. トリガーレベルラインの描画 (オレンジ点線)
-    // ==========================================
-    // CH1の電圧レンジを基準にレベル位置を表示
+    // CH1の電圧レンジを基準にレベル位置を計算
     const trigRange = VOLT_STEPS[scopeState.voltIndexCH1];
     const trigLevelPx = (scopeState.trigger.level / trigRange) * pixelsPerGrid;
+    
+    // Y座標を計算 (画面外にはみ出ないように制限をかけるとよりリアルですが、今回はそのまま)
     const trigY = centerY - trigLevelPx;
     
-    // 画面外にはみ出ないようにクリップしても良いが、今回はそのまま描画
+    // --- (A) 点線の描画 ---
     ctx.beginPath();
     ctx.strokeStyle = "rgba(255, 165, 0, 0.7)"; // オレンジ
     ctx.setLineDash([5, 5]); // 点線
@@ -805,6 +831,30 @@ function drawWaveform() {
     ctx.stroke();
     ctx.setLineDash([]); // 実線に戻す
 
+    // --- (B) ★追加: 右端の矢印マーカー描画 ---
+    const markerWidth = 24;  // マーカーの幅
+    const markerHeight = 18; // マーカーの高さ
+    const markerX = canvas.width; // 画面の右端
+    
+    ctx.beginPath();
+    ctx.fillStyle = "rgba(255, 165, 0, 1)"; // 不透明なオレンジ
+    
+    // ホームベース型を横に倒した形（左向きの矢印）を描く
+    ctx.moveTo(markerX - markerWidth, trigY); // 左の先端
+    ctx.lineTo(markerX - (markerWidth * 0.4), trigY - (markerHeight / 2)); // 左上の角
+    ctx.lineTo(markerX, trigY - (markerHeight / 2)); // 右上の角
+    ctx.lineTo(markerX, trigY + (markerHeight / 2)); // 右下の角
+    ctx.lineTo(markerX - (markerWidth * 0.4), trigY + (markerHeight / 2)); // 左下の角
+    ctx.closePath();
+    ctx.fill();
+    
+    // マーカーの中に「T」の文字を書く
+    ctx.fillStyle = "black"; // 文字は黒
+    ctx.font = "bold 11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    // マーカーの四角い部分の中心あたりに文字を置く
+    ctx.fillText("T", markerX - (markerWidth * 0.25), trigY + 1);
 
     // ==========================================
     // 5. テキスト情報 (インジケーター)
@@ -997,12 +1047,12 @@ containers.forEach(container => {
                 if (scopeState.timeIndex > 0) scopeState.timeIndex--;
             }
         }
-        // ★追加: トリガーレベルツマミ
+        // トリガーレベルツマミ
         else if (title === 'Level' || title === 'Trigger Level') {
             e.preventDefault();
             // CH1の現在のボルトレンジを基準に増減量を決める
             const currentRange = VOLT_STEPS[scopeState.voltIndexCH1];
-            const step = currentRange * 0.1; // レンジの10%ずつ変化
+            const step = currentRange * 0.5; // レンジの10%ずつ変化
 
             if (e.deltaY < 0) { // 奥へ回す（レベル上げる）
                 scopeState.trigger.level += step;
@@ -1046,6 +1096,7 @@ containers.forEach(container => {
         // ツマミ（ホイール操作できるもの）
         "KNOB_TIME", "KNOB_VOLT",
         "Volt1", "Volt2", "Volt3", "Volt4",
+        "Level",
         
     ];
 
