@@ -26,6 +26,14 @@ const scopeState = {
     timeOffset: 0,    // 波形アニメーション用
     currentMenu: null, // 表示中のメニュー
 
+    trigger: {
+        level: 0.0,       // トリガーレベル (V)
+        slope: 'rising',  // 立ち上がり ('rising') か 立下り ('falling')
+        source: 'CH1',    // トリガーソース
+        isTriggered: false // トリガーがかかっているかどうかのフラグ
+    },
+
+
     signals: {
         'CH1': { type: 'sine', amplitude: 2.0, frequency: 50 }, // 初期値: 正弦波, 2V
         'CH2': { type: 'sine', amplitude: 2.0, frequency: 50 },  // 初期値: 正弦波, 2V
@@ -530,8 +538,153 @@ function drawMenuAgilent(data) {
 // =======================================================================
 //  波形描画関数 (複数ch同時表示・AC/DC再現・信号操作対応版)
 // =======================================================================
+// 指定したチャンネル・時刻における電圧値を取得する関数
+function getSignalVoltage(ch, t) {
+    const signal = scopeState.signals[ch];
+    const freq = signal.frequency;
+    const amp = signal.amplitude;
+    
+    // 基本の位相 (2πft)
+    const phase = 2 * Math.PI * freq * t;
+    
+    let val = 0;
+    if (signal.type === 'sine') {
+        val = Math.sin(phase);
+    } else if (signal.type === 'square') {
+        val = Math.sin(phase) >= 0 ? 1 : -1;
+    } else if (signal.type === 'tri') {
+        val = (2 / Math.PI) * Math.asin(Math.sin(phase));
+    }
+    
+    // 実際の電圧 = 値(-1~1) * 振幅 + DCオフセット(今回は0)
+    return val * amp;
+}
+
+// トリガーポイント（時間オフセット）を計算する関数
+function calculateTriggerOffset() {
+    const source = scopeState.trigger.source;
+    const level = scopeState.trigger.level;
+    const freq = scopeState.signals[source].frequency;
+    
+    // 検索範囲: 1周期分だけ探せば十分
+    const period = 1.0 / freq;
+    
+    // 精度: 1周期を何分割して探すか（多いほど正確だが重くなる）
+    const steps = 100; 
+    const dt = period / steps;
+
+    // 現在のアニメーションタイム (流れている時間)
+    // これを基準に、一番近い「立ち上がりポイント」を探す
+    const baseTime = Math.abs(scopeState.timeOffset) % period;
+
+    for (let i = 0; i < steps * 2; i++) {
+        // 現在地から少しずつ未来へ
+        const t1 = baseTime + (i * dt);
+        const t2 = baseTime + ((i + 1) * dt);
+        
+        const v1 = getSignalVoltage(source, t1);
+        const v2 = getSignalVoltage(source, t2);
+
+        // 立ち上がり検出 (前がレベルより低く、次がレベル以上)
+        if (scopeState.trigger.slope === 'rising') {
+            if (v1 < level && v2 >= level) {
+                // 見つけた！この瞬間の時間を返す
+                scopeState.trigger.isTriggered = true;
+                return -t1; // 波形を左にずらすのでマイナス
+            }
+        }
+        // 立下り検出の場合は不等号を逆にする
+    }
+    
+    // 見つからなかった場合 (レベルが高すぎるなど)
+    scopeState.trigger.isTriggered = false;
+    return scopeState.timeOffset; // そのまま流す（Autoモード挙動）
+}
+
+
+// =======================================================================
+//  【補助関数】信号電圧の計算
+//   指定したチャンネル(ch)と時間(t)における本来の電圧値を返します
+// =======================================================================
+function getSignalVoltage(ch, t) {
+    const signal = scopeState.signals[ch];
+    const freq = signal.frequency;
+    const amp = signal.amplitude;
+    
+    // 位相 (2πft)
+    // ※ scopeState.timeOffset は calculateTriggerOffset 側で考慮されるためここでは使いません
+    const phase = 2 * Math.PI * freq * t;
+    
+    let val = 0;
+    if (signal.type === 'sine') {
+        val = Math.sin(phase);
+    } else if (signal.type === 'square') {
+        val = Math.sin(phase) >= 0 ? 1 : -1;
+    } else if (signal.type === 'tri') {
+        val = (2 / Math.PI) * Math.asin(Math.sin(phase));
+    }
+    
+    // 実際の電圧 = 波形値(-1~1) * 振幅
+    return val * amp;
+}
+
+// =======================================================================
+//  【補助関数】トリガーオフセットの計算
+//   「波形がトリガーレベルをまたぐ瞬間」がいつなのかを計算して返します
+// =======================================================================
+function calculateTriggerOffset() {
+    // ソース（通常CH1）とレベルの設定を取得
+    const source = scopeState.trigger.source;
+    const level = scopeState.trigger.level;
+    const signal = scopeState.signals[source];
+    
+    // まだ信号設定がない等の場合はそのまま流す
+    if (!signal) return scopeState.timeOffset;
+
+    const freq = signal.frequency;
+    const period = 1.0 / freq; // 1周期の時間
+    
+    // トリガー探索の精度（分割数）
+    const steps = 100; 
+    const dt = period / steps;
+
+    // 現在流れている時間（アニメーション用）を基準にする
+    // これにより、トリガーがかからない時は波形が流れて見える
+    const baseTime = scopeState.timeOffset; 
+
+    // 「現在時刻」の近くで、電圧がトリガーレベルをまたぐ瞬間を探す
+    // 範囲は少し広め（2周期分）にとって確実に捕捉する
+    for (let i = 0; i < steps * 2; i++) {
+        // 未来に向かって少しずつ時間を進めてチェック
+        // (baseTime はマイナス方向に進むことが多いので、ここでは絶対値や剰余で調整しても良いが、
+        //  単純に相対時間で検索する方がスムーズにつながる)
+        const t1 = baseTime - (i * dt);     // 直前
+        const t2 = baseTime - ((i + 1) * dt); // 直後（時間はマイナスに進んでいる前提）
+
+        const v1 = getSignalVoltage(source, t1);
+        const v2 = getSignalVoltage(source, t2);
+
+        // Rising Edge（立ち上がり）検出
+        // 「直前はレベルより低く」かつ「直後はレベル以上」の瞬間
+        if (scopeState.trigger.slope === 'rising') {
+            if (v2 < level && v1 >= level) {
+                scopeState.trigger.isTriggered = true;
+                return t1; // 見つけた時間を返す（これで描画位置を固定する）
+            }
+        }
+        // Falling Edge（立ち下がり）検出なら不等号を逆にする
+    }
+    
+    // 見つからなかった場合（レベルが高すぎる等）
+    scopeState.trigger.isTriggered = false;
+    return scopeState.timeOffset; // そのまま時間を流す（Autoモード）
+}
+
+// =======================================================================
+//  メイン描画関数: drawWaveform
+// =======================================================================
 function drawWaveform() {
-    // 1. 画面をクリア
+    // 1. 画面クリア
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
     // 電源OFFなら真っ暗にして終了
@@ -541,83 +694,70 @@ function drawWaveform() {
         return;
     }
 
-    // 2. 背景グリッドを描く
+    // 2. 背景グリッドを描画
     drawGrid();
 
-    // 共通の描画パラメータ
+    // 共通パラメータの計算
     const currentTimeDiv = TIME_STEPS[scopeState.timeIndex];
     const centerY = canvas.height / 2;
-    const pixelsPerGrid = 50; // 1グリッド = 50pxと仮定
+    const pixelsPerGrid = 50; // 1グリッド = 50px
+
+    // ★トリガー計算
+    // 波形を止めるための「時間ズレ」を取得
+    let drawTimeOffset = calculateTriggerOffset();
+
+    // 画面中央を「時間0（トリガーポイント）」にするための補正値
+    // これがないと、画面の左端が時間0になってしまう
+    const centerTimeShift = (canvas.width / 2 / pixelsPerGrid) * currentTimeDiv;
 
     // ==========================================
-    // 3. CH1, CH2 の波形を順番に描画 (ループ処理)
+    // 3. 波形描画ループ (CH1, CH2)
     // ==========================================
-    const channels = ['CH1', 'CH2'];
-
-    channels.forEach(ch => {
-        // そのチャンネルの信号データと設定を取得
+    ['CH1', 'CH2'].forEach(ch => {
         const signal = scopeState.signals[ch];
         
-        let voltIndex;
-        let color;
-        let coupling; // ACかDCか (シミュレーション用)
-
+        // チャンネルごとの設定（色、電圧レンジ、カップリング）
+        let voltIndex, color, coupling;
         if (ch === 'CH1') {
             voltIndex = scopeState.voltIndexCH1;
-            color = 'yellow'; // CH1は黄色
-            coupling = 'DC';  // CH1はDC結合 (オフセット有効)
+            color = 'yellow';
+            coupling = 'DC';
         } else {
             voltIndex = scopeState.voltIndexCH2;
-            color = 'cyan';   // CH2は水色
-            coupling = 'AC';  // CH2はAC結合 (オフセット無視)
+            color = 'cyan';
+            coupling = 'AC';
         }
         
         const currentVoltDiv = VOLT_STEPS[voltIndex];
-
-        // --- カップリングによるオフセット処理 ---
-        // DCなら設定されたoffset(直流成分)を反映、ACなら0にする
+        
+        // オフセット（AC結合なら無視、DCなら反映）
         let effectiveOffset = (coupling === 'AC') ? 0 : (signal.offset || 0);
 
-        // --- 描画開始 ---
+        // 描画開始
         ctx.beginPath();
         ctx.strokeStyle = color;
         ctx.lineWidth = 2;
 
-        // 振幅(px) = (信号電圧 / レンジ) * 1グリッドpx
-        const amplitudePx = (signal.amplitude / currentVoltDiv) * pixelsPerGrid;
-        
-        // オフセット(px) = (直流成分 / レンジ) * 1グリッドpx
-        // ※プラス電圧で波形は上にいくのでマイナスを掛ける(Canvasは下がプラス)
         const offsetPx = (effectiveOffset / currentVoltDiv) * pixelsPerGrid;
 
-        const frequency = signal.frequency; 
-
-        for (let x = 0; x < canvas.width; x++) {
-            // 時間軸の計算
+        // X座標（画面の左端から右端まで）ループ
+        // 負荷軽減のため step=2 (2pxごとに計算) にしています
+        for (let x = 0; x < canvas.width; x += 2) {
+            
+            // 1. 画面上のX座標を「時間」に変換
             const gridX = x / pixelsPerGrid;
-            const time = gridX * currentTimeDiv;
-            
-            // 位相計算 (timeOffsetで波を流す)
-            const phase = 2 * Math.PI * frequency * (time + scopeState.timeOffset);
-            
-            let value = 0;
+            const timeSpan = gridX * currentTimeDiv;
 
-            // 波形の種類による計算
-            if (signal.type === 'sine') {
-                // 正弦波
-                value = Math.sin(phase);
-            } 
-            else if (signal.type === 'square') {
-                // 矩形波
-                value = Math.sin(phase) >= 0 ? 1 : -1;
-            } 
-            else if (signal.type === 'tri') {
-                // 三角波
-                value = (2 / Math.PI) * Math.asin(Math.sin(phase));
-            }
-
-            // Y座標決定: 中心 - (波形の振幅) - (直流オフセット)
-            const y = centerY - (value * amplitudePx) - offsetPx;
+            // 2. 実際の信号時間を計算
+            //   [画面の時間] + [トリガーによる固定] - [画面中央への補正]
+            const signalTime = timeSpan + drawTimeOffset - centerTimeShift;
+            
+            // 3. その時間の電圧を取得
+            const rawVolt = getSignalVoltage(ch, signalTime);
+            
+            // 4. 電圧をY座標に変換
+            //   Canvasは上が0、下がプラスなのでマイナスする
+            const y = centerY - (rawVolt / currentVoltDiv * pixelsPerGrid) - offsetPx;
 
             if (x === 0) ctx.moveTo(x, y);
             else ctx.lineTo(x, y);
@@ -626,50 +766,60 @@ function drawWaveform() {
     });
 
     // ==========================================
-    // 4. 画面上のテキスト情報 (インジケーター)
+    // 4. トリガーレベルラインの描画 (オレンジ点線)
+    // ==========================================
+    // CH1の電圧レンジを基準にレベル位置を表示
+    const trigRange = VOLT_STEPS[scopeState.voltIndexCH1];
+    const trigLevelPx = (scopeState.trigger.level / trigRange) * pixelsPerGrid;
+    const trigY = centerY - trigLevelPx;
+    
+    // 画面外にはみ出ないようにクリップしても良いが、今回はそのまま描画
+    ctx.beginPath();
+    ctx.strokeStyle = "rgba(255, 165, 0, 0.7)"; // オレンジ
+    ctx.setLineDash([5, 5]); // 点線
+    ctx.lineWidth = 1;
+    ctx.moveTo(0, trigY);
+    ctx.lineTo(canvas.width, trigY);
+    ctx.stroke();
+    ctx.setLineDash([]); // 実線に戻す
+
+
+    // ==========================================
+    // 5. テキスト情報 (インジケーター)
     // ==========================================
     ctx.font = "bold 16px sans-serif";
     ctx.textAlign = "left";
 
-    // --- CH1 情報 (左下) ---
+    // --- CH1 情報 ---
     const vDiv1 = VOLT_STEPS[scopeState.voltIndexCH1];
     const vText1 = vDiv1 >= 1 ? `${vDiv1.toFixed(2)}V` : `${(vDiv1*1000).toFixed(0)}mV`;
-    
-    // 操作中のチャンネルに「▶」マークをつける
-    let marker1 = (scopeState.activeChannel === 'CH1') ? "▶ " : "   ";
-    // 信号情報 (例: Sine 2.0V)
-    const sig1 = scopeState.signals['CH1'];
-    const info1 = `(${sig1.type} ${sig1.amplitude.toFixed(1)}V)`;
-
+    const marker1 = (scopeState.activeChannel === 'CH1') ? "▶ " : "   ";
     ctx.fillStyle = "yellow";
-    ctx.fillText(`${marker1}CH1 ${vText1} ${info1}`, 20, canvas.height - 20);
+    ctx.fillText(`${marker1}CH1 ${vText1}`, 20, canvas.height - 20);
 
-
-    // --- CH2 情報 (CH1の右隣) ---
+    // --- CH2 情報 ---
     const vDiv2 = VOLT_STEPS[scopeState.voltIndexCH2];
     const vText2 = vDiv2 >= 1 ? `${vDiv2.toFixed(2)}V` : `${(vDiv2*1000).toFixed(0)}mV`;
-    
-    let marker2 = (scopeState.activeChannel === 'CH2') ? "▶ " : "   ";
-    const sig2 = scopeState.signals['CH2'];
-    const info2 = `(${sig2.type} ${sig2.amplitude.toFixed(1)}V)`;
-
+    const marker2 = (scopeState.activeChannel === 'CH2') ? "▶ " : "   ";
     ctx.fillStyle = "cyan";
-    // 表示位置が重ならないようにX座標をずらす (260px付近)
-    ctx.fillText(`${marker2}CH2 ${vText2} ${info2}`, 260, canvas.height - 20);
+    ctx.fillText(`${marker2}CH2 ${vText2}`, 200, canvas.height - 20);
 
-
-    // --- 時間軸 情報 (中央下) ---
+    // --- 時間軸 情報 ---
     ctx.fillStyle = "white";
     ctx.textAlign = "center";
-    
     let tText = currentTimeDiv >= 1 ? `${currentTimeDiv.toFixed(2)}s` : 
                 currentTimeDiv >= 0.001 ? `${(currentTimeDiv*1000).toFixed(2)}ms` : `${(currentTimeDiv*1000000).toFixed(0)}us`;
-    
-    // 画面幅の中央に配置
     ctx.fillText(`M ${tText}`, canvas.width / 2, canvas.height - 20);
 
+    // --- トリガー情報 (右上) ---
+    ctx.textAlign = "right";
+    ctx.fillStyle = "rgba(255, 165, 0, 1)";
+    const statusText = scopeState.trigger.isTriggered ? "Trig'd" : "Auto";
+    // トリガーレベルと状態を表示
+    ctx.fillText(`T: ${scopeState.trigger.level.toFixed(2)}V (${statusText})`, canvas.width - 10, 30);
+
     // ==========================================
-    // 5. メニューの描画 (一番手前)
+    // 6. メニュー描画
     // ==========================================
     drawMenu();
 }
@@ -811,6 +961,19 @@ containers.forEach(container => {
                 if (scopeState.timeIndex < TIME_STEPS.length - 1) scopeState.timeIndex++;
             } else { // 奥へ回す（時間拡大＝レンジ下げ）
                 if (scopeState.timeIndex > 0) scopeState.timeIndex--;
+            }
+        }
+        // ★追加: トリガーレベルツマミ
+        else if (title === 'Level' || title === 'Trigger Level') {
+            e.preventDefault();
+            // CH1の現在のボルトレンジを基準に増減量を決める
+            const currentRange = VOLT_STEPS[scopeState.voltIndexCH1];
+            const step = currentRange * 0.1; // レンジの10%ずつ変化
+
+            if (e.deltaY < 0) { // 奥へ回す（レベル上げる）
+                scopeState.trigger.level += step;
+            } else { // 手前へ回す（レベル下げる）
+                scopeState.trigger.level -= step;
             }
         }
     }, { passive: false });
