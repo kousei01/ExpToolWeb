@@ -293,3 +293,204 @@ body {
     padding: 2px 5px;
     border-radius: 3px;
 }
+
+/* --- 実験机エリア --- */
+.lab-bench-container {
+    width: 95%;
+    max-width: 1000px;
+    margin: 20px auto;
+    background-color: #2c3e50;
+    padding: 10px;
+    border-radius: 8px;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+}
+
+.bench-label {
+    color: #bdc3c7;
+    font-size: 14px;
+    font-weight: bold;
+    margin-bottom: 10px;
+    border-bottom: 2px solid #34495e;
+    padding-bottom: 5px;
+}
+
+.lab-bench {
+    display: flex;
+    justify-content: space-around;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+/* --- 共通デバイスボックス --- */
+.device-box {
+    background: #ecf0f1; /* 筐体グレー */
+    border: 1px solid #95a5a6;
+    border-bottom: 4px solid #7f8c8d; /* 立体感 */
+    border-radius: 4px;
+    width: 260px;
+    padding: 10px;
+    position: relative;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.05);
+}
+
+.dev-header {
+    font-size: 11px;
+    font-weight: bold;
+    color: #2c3e50;
+    border-bottom: 1px solid #bdc3c7;
+    margin-bottom: 10px;
+    padding-bottom: 2px;
+}
+
+/* --- デジタル表示部 --- */
+.dev-display {
+    background: #000;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 22px;
+    padding: 8px;
+    border-radius: 4px;
+    text-align: right;
+    margin-bottom: 15px;
+    text-shadow: 0 0 5px currentColor;
+    border: 2px inset #555;
+}
+.green-lcd { color: #00ff00; }
+.orange-lcd { color: #ffae00; }
+.red-lcd { color: #ff3333; }
+
+.dev-display-mini {
+    background: #222;
+    padding: 2px 6px;
+    font-size: 16px;
+    border-radius: 2px;
+    min-width: 60px;
+    text-align: center;
+    margin-top: 5px;
+}
+
+/* --- 操作部レイアウト --- */
+.dev-controls {
+    display: flex;
+    justify-content: space-around;
+    align-items: flex-start;
+}
+
+.knob-wrapper, .switch-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+}
+
+.knob-wrapper span, .switch-wrapper span {
+    font-size: 10px;
+    font-weight: bold;
+    color: #555;
+}
+
+/* --- ツマミ (CSSで描画) --- */
+.knob-img {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #fff, #bdc3c7, #7f8c8d);
+    border: 1px solid #7f8c8d;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    position: relative;
+    cursor: ns-resize; /* 上下リサイズカーソル */
+}
+/* ツマミの目印 */
+.knob-img::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 50%;
+    width: 2px;
+    height: 10px;
+    background: #333;
+    transform: translateX(-50%);
+}
+
+/* --- ボタン・スイッチ --- */
+.rect-btn {
+    background: #3498db;
+    color: white;
+    border: none;
+    padding: 4px 8px;
+    font-size: 11px;
+    border-radius: 2px;
+    cursor: pointer;
+    box-shadow: 0 2px 0 #2980b9;
+}
+.rect-btn:active {
+    transform: translateY(2px);
+    box-shadow: none;
+}
+
+.round-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: #e74c3c;
+    color: white;
+    border: none;
+    font-size: 8px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 2px 0 #c0392b;
+}
+.round-btn:active {
+    transform: translateY(2px);
+    box-shadow: none;
+}
+
+/* トグルスイッチ */
+.toggle-switch {
+    width: 40px;
+    height: 20px;
+    background: #333;
+    border-radius: 10px;
+    position: relative;
+    cursor: pointer;
+}
+.toggle-knob {
+    width: 16px;
+    height: 16px;
+    background: #fff;
+    border-radius: 50%;
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: left 0.2s;
+}
+/* ON状態のクラス */
+.toggle-switch.active .toggle-knob {
+    left: 22px;
+}
+
+/* LED */
+#led-dc {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #555;
+    margin-top: 5px;
+}
+#led-dc.led-on {
+    background: #ff0000;
+    box-shadow: 0 0 5px #ff0000;
+}
+
+.kit-section {
+    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.label-small {
+    font-size: 9px;
+    color: #7f8c8d;
+    margin-bottom: 2px;
+    width: 100%;
+    text-align: center;
+}

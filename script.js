@@ -47,9 +47,42 @@ const scopeState = {
         resolution: 8,       // ビット数 (4 or 8)
         samplingPeriod: 5,   // サンプリング周期 [µs] (5 ~ 500)
         inputFreq: 1000      // 入力周波数 [Hz]
-    }
-
+    },
 };
+
+let cursorState = {   
+    isActive: false,
+    selectedCursor: 'Y1',
+    y1Volt: 2.0,
+    y2Volt: -2.0
+};
+
+// 1マスのピクセル数（既存のグリッド描画の幅に合わせてください。例: 40）
+const PIXELS_PER_DIV_Y = 40;
+
+// --- 実験機材（Laboratory Instruments）の状態 ---
+const labInstruments = {
+    // 1. 発振器 (Function Generator)
+    funcGen: {
+        freq: 1000,      // Hz
+        amp: 3.0,        // Vpp
+        wave: 'sine'     // 'sine' | 'square'
+    },
+    // 2. 実験キット (AD/DA Trainer)
+    kit: {
+        samplingTs: 5,   // µs
+        resolution: 8,   // bit
+        fsr: 10.24       // Full Scale Range (V)
+    },
+    // 3. 直流電源 (DC Power)
+    dcPower: {
+        voltage: 0.0,    // V
+        outputOn: false
+    }
+};
+
+// サンプリング周期の選択肢 (µs)
+const SAMPLING_OPTIONS = [5, 10, 20, 50, 100, 200, 500];
 
 // メニューの内容データ
 // --- ★変更: Hantek用のメニュー定義 (DSO5000/2000系を想定) ---
@@ -564,27 +597,77 @@ function drawMenuAgilent(data) {
 //  波形描画関数 (複数ch同時表示・AC/DC再現・信号操作対応版)
 // =======================================================================
 // 指定したチャンネル・時刻における電圧値を取得する関数
+/**
+ * 実験機材の信号電圧を取得する関数 (シミュレーションの中核)
+ * CH1: 入力信号そのもの (Source)
+ * CH2: AD/DA変換後の信号 (Processed)
+ */
 function getSignalVoltage(ch, t) {
-    const signal = scopeState.signals[ch];
-    const freq = signal.frequency;
-    const amp = signal.amplitude;
-    
-    // 基本の位相 (2πft)
-    const phase = 2 * Math.PI * freq * t;
-    
-    let val = 0;
-    if (signal.type === 'sine') {
-        val = Math.sin(phase);
-    } else if (signal.type === 'square') {
-        val = Math.sin(phase) >= 0 ? 1 : -1;
-    } else if (signal.type === 'tri') {
-        val = (2 / Math.PI) * Math.asin(Math.sin(phase));
-    }
-    
-    // 実際の電圧 = 値(-1~1) * 振幅 + DCオフセット(今回は0)
-    return val * amp;
-}
+    // 1. ベースとなる入力信号（アナログ電圧）を計算
+    let sourceVoltage = 0;
 
+    if (labInstruments.dcPower.outputOn) {
+        // DC電源がONなら、DC電圧を出力
+        sourceVoltage = labInstruments.dcPower.voltage;
+    } else {
+        // DC電源OFFなら、発振器の信号を出力
+        const fg = labInstruments.funcGen;
+        // 振幅はVppなので、0を中心に振るなら半分の振幅
+        const peakAmp = fg.amp / 2; 
+        const phase = 2 * Math.PI * fg.freq * t;
+
+        if (fg.wave === 'sine') {
+            sourceVoltage = Math.sin(phase) * peakAmp;
+        } else {
+            // 矩形波
+            sourceVoltage = (Math.sin(phase) >= 0 ? 1 : -1) * peakAmp;
+        }
+    }
+
+    // --- CH1なら入力信号をそのまま返す ---
+    if (ch === 'CH1') {
+        return sourceVoltage;
+    }
+
+    // --- CH2なら実験キット(AD/DA)を通した信号を返す ---
+    if (ch === 'CH2') {
+        const kit = labInstruments.kit;
+        
+        // 1. 標本化 (Sampling)
+        // 現在時刻 t を サンプリング周期 Ts で丸める
+        const Ts_sec = kit.samplingTs * 0.000001; // µs -> s
+        const sampledTime = Math.floor(t / Ts_sec) * Ts_sec;
+        
+        // 丸めた時刻での「入力信号」を再計算（サンプル＆ホールド）
+        let holdVoltage = 0;
+        if (labInstruments.dcPower.outputOn) {
+            holdVoltage = labInstruments.dcPower.voltage; // DCなら時間関係なし
+        } else {
+            const fg = labInstruments.funcGen;
+            const peakAmp = fg.amp / 2;
+            const phase = 2 * Math.PI * fg.freq * sampledTime;
+            if (fg.wave === 'sine') holdVoltage = Math.sin(phase) * peakAmp;
+            else holdVoltage = (Math.sin(phase) >= 0 ? 1 : -1) * peakAmp;
+        }
+
+        // 2. 量子化 (Quantization)
+        // FSR = 10.24V (-5.12V ~ +5.12V と仮定)
+        const FSR = kit.fsr; 
+        const steps = Math.pow(2, kit.resolution); // 2^4=16, 2^8=256
+        const stepVolt = FSR / steps; // 1ステップあたりの電圧
+
+        // 電圧をステップ単位で丸める
+        let quantized = Math.round(holdVoltage / stepVolt) * stepVolt;
+        
+        // FSR範囲外のクリッピング
+        if(quantized > FSR/2) quantized = FSR/2;
+        if(quantized < -FSR/2) quantized = -FSR/2;
+
+        return quantized;
+    }
+
+    return 0; // CH3, CH4などは0
+}
 // トリガーポイント（時間オフセット）を計算する関数
 function calculateTriggerOffset() {
     const source = scopeState.trigger.source;
@@ -895,15 +978,89 @@ function drawWaveform() {
     // ==========================================
     drawMenu();
 }
+
+// --- 追記箇所：904行目あたり（animationLoopの直前など） ---
+
+/**
+ * カーソル（点線）と電圧値を描画する関数
+ */
+function drawCursors(targetCtx, targetCanvas) {
+    const cs = cursorState;
+    if (!cs) return;
+
+    targetCtx.save();
+    
+    const width = targetCanvas.width;
+    const height = targetCanvas.height;
+    const centerY = height / 2;
+    const pixelsPerGrid = 50; // script.js内の設定に合わせる
+    
+    // 現在のチャンネルの電圧レンジを取得
+    const voltIndex = (scopeState.activeChannel === 'CH1') ? scopeState.voltIndexCH1 : scopeState.voltIndexCH2;
+    const currentVoltDiv = VOLT_STEPS[voltIndex];
+
+    // 電圧値(V)をY座標(px)に変換
+    const y1Px = centerY - (cs.y1Volt / currentVoltDiv * pixelsPerGrid);
+    const y2Px = centerY - (cs.y2Volt / currentVoltDiv * pixelsPerGrid);
+
+    // 点線の設定
+    targetCtx.lineWidth = 1;
+    targetCtx.setLineDash([6, 6]); 
+    
+    const colorActive = "#00FFFF";   // 選択中 (水色)
+    const colorInactive = "#008B8B"; // 非選択 (暗い水色)
+
+    // --- Y1カーソルの描画 ---
+    targetCtx.strokeStyle = (cs.selectedCursor === 'Y1') ? colorActive : colorInactive;
+    targetCtx.beginPath();
+    targetCtx.moveTo(0, y1Px);
+    targetCtx.lineTo(width, y1Px);
+    targetCtx.stroke();
+    
+    // --- Y2カーソルの描画 ---
+    targetCtx.strokeStyle = (cs.selectedCursor === 'Y2') ? colorActive : colorInactive;
+    targetCtx.beginPath();
+    targetCtx.moveTo(0, y2Px);
+    targetCtx.lineTo(width, y2Px);
+    targetCtx.stroke();
+
+    // --- 右上の情報パネル描画 ---
+    targetCtx.setLineDash([]); // 実線に戻す
+    targetCtx.fillStyle = "rgba(0, 0, 0, 0.7)";
+    targetCtx.fillRect(width - 165, 10, 155, 75);
+    
+    targetCtx.font = "14px 'Consolas', monospace";
+    targetCtx.textAlign = "left";
+    
+    // Y1表示
+    targetCtx.fillStyle = (cs.selectedCursor === 'Y1') ? colorActive : colorInactive;
+    targetCtx.fillText(`${cs.selectedCursor === 'Y1' ? '>' : ' '} Y1: ${cs.y1Volt.toFixed(2)}V`, width - 155, 30);
+    
+    // Y2表示
+    targetCtx.fillStyle = (cs.selectedCursor === 'Y2') ? colorActive : colorInactive;
+    targetCtx.fillText(`${cs.selectedCursor === 'Y2' ? '>' : ' '} Y2: ${cs.y2Volt.toFixed(2)}V`, width - 155, 50);
+    
+    // ΔY表示
+    targetCtx.fillStyle = "#FFFFFF";
+    const deltaY = Math.abs(cs.y1Volt - cs.y2Volt);
+    targetCtx.fillText(`  ΔY: ${deltaY.toFixed(2)}V`, width - 155, 72);
+
+    targetCtx.restore();
+}
+
 function animationLoop() {
     if (scopeState.isOn && scopeState.isRunning) {
         scopeState.timeOffset -= 0.0001; 
     }
     if (canvas && ctx) {
         drawWaveform();
+        if (cursorState && cursorState.isActive) {
+            drawCursors(ctx, canvas);
+        }
     }
     requestAnimationFrame(animationLoop);
 }
+
 
 
 // --- 5. イベントリスナー ---
@@ -974,6 +1131,19 @@ containers.forEach(container => {
             }
             
             updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
+        }
+
+        else if (title === 'CURSORS') {
+            if (!scopeState.isOn) return;
+            cursorState.isActive = !cursorState.isActive;
+            if (cursorState.isActive) {
+                cursorState.selectedCursor = 'Y1'; // ON時はY1を選択状態に
+            }
+        }
+        else if (title === 'EntryKnob') {
+            if (!scopeState.isOn || !cursorState.isActive) return;
+            // Y1 / Y2の切り替え
+            cursorState.selectedCursor = (cursorState.selectedCursor === 'Y1') ? 'Y2' : 'Y1';
         }
         
         // [D] その他の汎用メニューボタン (Measure, Acquire, Utilityなど)
@@ -1060,6 +1230,22 @@ containers.forEach(container => {
                 scopeState.trigger.level -= step;
             }
         }
+
+        else if (title === 'EntryKnob') {
+            if (!scopeState.isOn || !cursorState.isActive) return;
+            e.preventDefault();
+
+            // 現在のCH1のVOLT/DIVを基準に移動量を決める
+            const voltPerDiv = VOLT_STEPS[scopeState.voltIndexCH1];
+            const stepVolt = voltPerDiv * 0.05; // 1カリカリあたりの移動量 (1マスの1/20)
+            const direction = e.deltaY > 0 ? -1 : 1; 
+
+            if (cursorState.selectedCursor === 'Y1') {
+                cursorState.y1Volt += stepVolt * direction;
+            } else {
+                cursorState.y2Volt += stepVolt * direction;
+            }
+        }
     }, { passive: false });
 
 
@@ -1081,7 +1267,6 @@ containers.forEach(container => {
     });
 });
 
-
 // --- 6. マップ変換機能（実装済み=青、未実装=赤 に色分け版） ---
 (function convertMapToHotspots() {
     
@@ -1096,7 +1281,7 @@ containers.forEach(container => {
         // ツマミ（ホイール操作できるもの）
         "KNOB_TIME", "KNOB_VOLT",
         "Volt1", "Volt2", "Volt3", "Volt4",
-        "Level",
+        "Level","CURSORS", "EntryKnob"
         
     ];
 
@@ -1322,4 +1507,122 @@ function quitTestMode() {
     // 3. フィードバック（正解・不正解の文字）をリセットしておく
     document.getElementById('test-feedback').innerHTML = "";
     document.getElementById('test-feedback').className = "";
+}
+
+// ==========================================
+// 実験機材 (Lab Bench) の操作ロジック
+// ==========================================
+
+// 画面表示を JSの状態(labInstruments)と同期させる関数
+function updateLabUI() {
+    // --- 発振器 ---
+    document.getElementById('fg-freq-disp').innerText = labInstruments.funcGen.freq;
+    document.getElementById('fg-amp-disp').innerText = labInstruments.funcGen.amp.toFixed(2);
+    document.getElementById('btn-fg-wave').innerText = labInstruments.funcGen.wave.toUpperCase();
+    
+    // --- 実験キット ---
+    document.getElementById('kit-sample-disp').innerText = labInstruments.kit.samplingTs;
+    document.getElementById('kit-res-disp').innerText = labInstruments.kit.resolution + " bit";
+    
+    // スイッチの見た目
+    const sw = document.getElementById('sw-kit-res');
+    if (labInstruments.kit.resolution === 4) sw.classList.add('active');
+    else sw.classList.remove('active');
+
+    // --- DC電源 ---
+    document.getElementById('dc-volt-disp').innerText = labInstruments.dcPower.voltage.toFixed(2);
+    
+    // LEDの点灯
+    const led = document.getElementById('led-dc');
+    if (labInstruments.dcPower.outputOn) led.classList.add('led-on');
+    else led.classList.remove('led-on');
+
+    // オシロスコープの再描画（静止時も反映させるため）
+    if(scopeState.isOn) drawWaveform();
+}
+
+// 初期化時に一度実行
+document.addEventListener('DOMContentLoaded', updateLabUI);
+
+
+// --- イベントリスナー設定 ---
+
+// 1. 発振器：周波数ツマミ (ホイール)
+document.getElementById('knob-fg-freq').addEventListener('wheel', function(e) {
+    e.preventDefault();
+    // Shiftキー押しながらだと 1000Hz単位、通常は 100Hz単位
+    const step = e.shiftKey ? 1000 : 100;
+    
+    if (e.deltaY < 0) labInstruments.funcGen.freq += step; // 上回転: 増加
+    else labInstruments.funcGen.freq -= step;              // 下回転: 減少
+
+    // 範囲制限 (1Hz ~ 200kHz)
+    if(labInstruments.funcGen.freq < 1) labInstruments.funcGen.freq = 1;
+    if(labInstruments.funcGen.freq > 200000) labInstruments.funcGen.freq = 200000;
+
+    updateLabUI();
+});
+
+// 2. 発振器：振幅ツマミ (ホイール)
+document.getElementById('knob-fg-amp').addEventListener('wheel', function(e) {
+    e.preventDefault();
+    if (e.deltaY < 0) labInstruments.funcGen.amp += 0.1;
+    else labInstruments.funcGen.amp -= 0.1;
+
+    // 範囲制限 (0 ~ 10V)
+    if(labInstruments.funcGen.amp < 0) labInstruments.funcGen.amp = 0;
+    if(labInstruments.funcGen.amp > 10.2) labInstruments.funcGen.amp = 10.2; // FSR付近まで
+
+    updateLabUI();
+});
+
+// 3. 発振器：波形切替ボタン
+function toggleLabWave() {
+    if (labInstruments.funcGen.wave === 'sine') labInstruments.funcGen.wave = 'square';
+    else labInstruments.funcGen.wave = 'sine';
+    updateLabUI();
+}
+
+// 4. 実験キット：サンプリング周期ツマミ (ホイール)
+document.getElementById('knob-kit-sample').addEventListener('wheel', function(e) {
+    e.preventDefault();
+    // 配列 SAMPLING_OPTIONS の中を移動
+    let currentIdx = SAMPLING_OPTIONS.indexOf(labInstruments.kit.samplingTs);
+    
+    if (e.deltaY < 0) { // 右に回す -> 周期長く
+        if (currentIdx < SAMPLING_OPTIONS.length - 1) currentIdx++;
+    } else { // 左に回す -> 周期短く
+        if (currentIdx > 0) currentIdx--;
+    }
+    labInstruments.kit.samplingTs = SAMPLING_OPTIONS[currentIdx];
+    updateLabUI();
+});
+
+// 5. 実験キット：ビット数切替スイッチ (クリック)
+document.getElementById('sw-kit-res').addEventListener('click', function() {
+    if (labInstruments.kit.resolution === 8) labInstruments.kit.resolution = 4;
+    else labInstruments.kit.resolution = 8;
+    updateLabUI();
+});
+
+// 6. DC電源：電圧ツマミ (ホイール)
+document.getElementById('knob-dc-volt').addEventListener('wheel', function(e) {
+    e.preventDefault();
+    // Shiftキーで1V単位、通常0.01V単位
+    const step = e.shiftKey ? 1.0 : 0.01;
+
+    if (e.deltaY < 0) labInstruments.dcPower.voltage += step;
+    else labInstruments.dcPower.voltage -= step;
+
+    // 範囲制限 (0 ~ 10.24V)
+    if(labInstruments.dcPower.voltage < 0) labInstruments.dcPower.voltage = 0;
+    if(labInstruments.dcPower.voltage > 10.24) labInstruments.dcPower.voltage = 10.24;
+
+    updateLabUI();
+});
+
+// 7. DC電源：OUTPUTボタン
+function toggleDcOutput() {
+    labInstruments.dcPower.outputOn = !labInstruments.dcPower.outputOn;
+    updateLabUI();
 }

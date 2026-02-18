@@ -172,9 +172,9 @@
             <area target="" alt="Pos4" title="Pos4" href="" coords="2106,872,28" shape="circle">
             <area target="" alt="Trigger" title="Trigger" href="" coords="1442,319,1506,355" shape="rect">
             <area target="" alt="Level" title="Level" href="" coords="1576,376,29" shape="circle">
-            <area target="" alt="Cursr" title="Cursr" href="" coords="1747,318,1807,354" shape="rect">
+            <area target="" alt="CURSORS" title="CURSORS" href="" coords="1747,318,1807,354" shape="rect">
             <area target="" alt="Meas" title="Meas" href="" coords="1747,392,1807,428" shape="rect">
-            <area target="" alt="Cursrツマミ" title="Cursrツマミ" href="" coords="1883,376,29" shape="circle">
+            <area target="" alt="EntryKnob" title="EntryKnob" href="" coords="1883,376,29" shape="circle">
             <area target="" alt="Math" title="Math" href="" coords="1972,465,2028,505" shape="rect">
             <area target="" alt="Serial" title="Serial" href="" coords="1972,314,2032,352" shape="rect">
             <area target="" alt="Ref" title="Ref" href="" coords="1970,540,2028,576" shape="rect">
@@ -211,6 +211,80 @@
             <area target="" alt="CursorB" title="CursorB" href="" coords="2114,504,27" shape="circle">
         </map>
     </div>
+
+<div class="lab-bench-container">
+    <div class="bench-label">実験机 (Laboratory Bench)</div>
+    
+    <div class="lab-bench">
+        
+        <!-- 1. 発振器 (WF1973) -->
+        <div class="device-box" id="dev-funcgen">
+            <div class="dev-header">FUNCTION GENERATOR</div>
+            <div class="dev-display green-lcd">
+                <span id="fg-freq-disp">1000</span> Hz<br>
+                <span id="fg-amp-disp">3.00</span> Vpp
+            </div>
+            <div class="dev-controls">
+                <div class="knob-wrapper">
+                    <div class="knob-img" id="knob-fg-freq" title="【周波数】ホイールで調整 (Shift押しながらで大きく変化)"></div>
+                    <span>FREQ</span>
+                </div>
+                <div class="knob-wrapper">
+                    <div class="knob-img" id="knob-fg-amp" title="【振幅】ホイールで調整"></div>
+                    <span>AMP</span>
+                </div>
+                <div class="switch-wrapper">
+                    <button id="btn-fg-wave" class="rect-btn" onclick="toggleLabWave()">SINE</button>
+                    <span>WAVE</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. AD/DA実験キット (ITF-203B) -->
+        <div class="device-box" id="dev-kit">
+            <div class="dev-header">AD/DA TRAINER (ITF-203B)</div>
+            
+            <div class="kit-section">
+                <div class="label-small">SAMPLING PERIOD (Ts)</div>
+                <div class="knob-wrapper">
+                    <div class="knob-img" id="knob-kit-sample" title="【サンプリング周期】ホイールで切替"></div>
+                    <div class="dev-display-mini orange-lcd">
+                        <span id="kit-sample-disp">5</span> µs
+                    </div>
+                </div>
+            </div>
+            
+            <div class="kit-section" style="border-top:1px solid #666; padding-top:5px;">
+                <div class="label-small">RESOLUTION (N)</div>
+                <div class="switch-wrapper">
+                    <div class="toggle-switch" id="sw-kit-res" title="【ビット数切替】クリックで 4bit/8bit 切替">
+                        <div class="toggle-knob"></div>
+                    </div>
+                    <span id="kit-res-disp">8 bit</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. 直流電源 (GPD-4303S) -->
+        <div class="device-box" id="dev-dc">
+            <div class="dev-header">DC POWER SUPPLY</div>
+            <div class="dev-display red-lcd">
+                <span id="dc-volt-disp">0.00</span> V
+            </div>
+            <div class="dev-controls">
+                <div class="knob-wrapper">
+                    <div class="knob-img" id="knob-dc-volt" title="【DC電圧】ホイールで調整"></div>
+                    <span>VOLTAGE</span>
+                </div>
+                <div class="switch-wrapper">
+                    <button id="btn-dc-out" class="round-btn" onclick="toggleDcOutput()">OUTPUT</button>
+                    <div id="led-dc" class="led-off"></div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
 
     <!-- ========================================== -->
     <!-- 説明書画面 -->
