@@ -26,6 +26,16 @@ const scopeState = {
     timeOffset: 0,    // 波形アニメーション用
     currentMenu: null, // 表示中のメニュー
 
+    isCH1On: true,
+    isCH2On: true,
+    isMeasureOn: true,
+    offsetY_CH1: 0,  // CH1の上下位置
+    offsetY_CH2: 0,  // CH2の上下位置
+    triggerLevel: 0,        // トリガーレベル(電圧)
+    triggerEdge: 'rising',  // 'rising'(立ち上がり) or 'falling'(立ち下がり)
+    triggerSourceCh: 'CH1', // トリガーの基準CH
+    lastTriggerTime: 0,      // Stop時の波形固定用
+
     trigger: {
         level: 4.0,       // トリガーレベル (V)
         slope: 'rising',  // 立ち上がり ('rising') か 立下り ('falling')
@@ -50,6 +60,67 @@ const scopeState = {
     }
 
 };
+
+const signalGen = {
+    CH1: { type: 'sine', amplitude: 2.0, frequency: 10 },
+    CH2: { type: 'square', amplitude: 1.5, frequency: 5 }
+};
+
+function getVoltageAtTime(ch, t) {
+    const sig = signalGen[ch];
+    if (!sig) return 0;
+
+    const phase = 2 * Math.PI * sig.frequency * t;
+    if (sig.type === 'sine') {
+        return sig.amplitude * Math.sin(phase);
+    } else if (sig.type === 'square') {
+        return Math.sin(phase) >= 0 ? sig.amplitude : -sig.amplitude;
+    } else if (sig.type === 'tri') {
+        return sig.amplitude * (2 / Math.PI) * Math.asin(Math.sin(phase));
+    }
+    return 0;
+}
+
+function calculateTriggerOffset(ch, level, edge) {
+    if (!scopeState.isRunning) return scopeState.lastTriggerTime; 
+
+    let t = 0;
+    let dt = TIME_STEPS[scopeState.timeIndex] / 200;
+    let prevV = getVoltageAtTime(ch, t);
+
+    for (let i = 0; i < 4000; i++) {
+        t += dt;
+        let currV = getVoltageAtTime(ch, t);
+        if (edge === 'rising' && prevV < level && currV >= level) {
+            return t - dt + (dt * ((level - prevV) / (currV - prevV) || 0));
+        } else if (edge === 'falling' && prevV > level && currV <= level) {
+            return t - dt + (dt * ((level - prevV) / (currV - prevV) || 0));
+        }
+        prevV = currV;
+    }
+    return Date.now() / 1000; // トリガーが見つからない場合はフリーラン
+}
+
+function drawMeasurements() {
+    if (!scopeState.isMeasureOn) return;
+
+    ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.fillRect(10, canvas.height - 60, 250, 50);
+    ctx.font = "14px monospace";
+
+    if (scopeState.isCH1On) {
+        let sig1 = signalGen.CH1;
+        ctx.fillStyle = "#ffff00"; // CH1カラー(黄)
+        ctx.fillText(`CH1: ${(sig1.amplitude*2).toFixed(2)}Vp-p  ${sig1.frequency}Hz`, 20, canvas.height - 40);
+    }
+    if (scopeState.isCH2On) {
+        let sig2 = signalGen.CH2;
+        ctx.fillStyle = "#00ffff"; // CH2カラー(水色)
+        ctx.fillText(`CH2: ${(sig2.amplitude*2).toFixed(2)}Vp-p  ${sig2.frequency}Hz`, 20, canvas.height - 20);
+    }
+}
+
+
 
 // メニューの内容データ
 // --- ★変更: Hantek用のメニュー定義 (DSO5000/2000系を想定) ---
@@ -743,67 +814,57 @@ function drawWaveform() {
     // 2. 背景グリッドを描画
     drawGrid();
 
-    // 共通パラメータの計算
     const currentTimeDiv = TIME_STEPS[scopeState.timeIndex];
     const centerY = canvas.height / 2;
     const pixelsPerGrid = 50; // 1グリッド = 50px
 
     // ★トリガー計算
-    // 波形を止めるための「時間ズレ」を取得
     let drawTimeOffset = calculateTriggerOffset();
-
-    // 画面中央を「時間0（トリガーポイント）」にするための補正値
-    // これがないと、画面の左端が時間0になってしまう
     const centerTimeShift = (canvas.width / 2 / pixelsPerGrid) * currentTimeDiv;
 
     // ==========================================
     // 3. 波形描画ループ (CH1, CH2)
     // ==========================================
     ['CH1', 'CH2'].forEach(ch => {
+        // ★ ON/OFF判定を追加 (scopeStateに isCH1On 等が追加されている前提)
+        if (ch === 'CH1' && !scopeState.isCH1On) return;
+        if (ch === 'CH2' && !scopeState.isCH2On) return;
+
         const signal = scopeState.signals[ch];
+        if (!signal) return; // 信号データがない場合はスキップ
         
-        // チャンネルごとの設定（色、電圧レンジ、カップリング）
-        let voltIndex, color, coupling;
+        let voltIndex, color, coupling, offsetY;
         if (ch === 'CH1') {
             voltIndex = scopeState.voltIndexCH1;
             color = 'yellow';
             coupling = 'DC';
+            offsetY = scopeState.offsetY_CH1 || 0; // ★上下位置の反映
         } else {
             voltIndex = scopeState.voltIndexCH2;
             color = 'cyan';
             coupling = 'AC';
+            offsetY = scopeState.offsetY_CH2 || 0; // ★上下位置の反映
         }
         
         const currentVoltDiv = VOLT_STEPS[voltIndex];
-        
-        // オフセット（AC結合なら無視、DCなら反映）
         let effectiveOffset = (coupling === 'AC') ? 0 : (signal.offset || 0);
 
-        // 描画開始
         ctx.beginPath();
         ctx.strokeStyle = color;
         ctx.lineWidth = 2;
 
         const offsetPx = (effectiveOffset / currentVoltDiv) * pixelsPerGrid;
 
-        // X座標（画面の左端から右端まで）ループ
-        // 負荷軽減のため step=2 (2pxごとに計算) にしています
         for (let x = 0; x < canvas.width; x += 2) {
-            
-            // 1. 画面上のX座標を「時間」に変換
             const gridX = x / pixelsPerGrid;
             const timeSpan = gridX * currentTimeDiv;
-
-            // 2. 実際の信号時間を計算
-            //   [画面の時間] + [トリガーによる固定] - [画面中央への補正]
             const signalTime = timeSpan + drawTimeOffset - centerTimeShift;
             
-            // 3. その時間の電圧を取得
-            const rawVolt = getSignalVoltage(ch, signalTime);
+            // ★電圧取得関数はご自身の環境に合わせてください (getVoltageAtTime など)
+            const rawVolt = getSignalVoltage(ch, signalTime); 
             
-            // 4. 電圧をY座標に変換
-            //   Canvasは上が0、下がプラスなのでマイナスする
-            const y = centerY - (rawVolt / currentVoltDiv * pixelsPerGrid) - offsetPx;
+            // ★上下位置(offsetY)を足し合わせる
+            const y = centerY - (rawVolt / currentVoltDiv * pixelsPerGrid) - offsetPx + offsetY;
 
             if (x === 0) ctx.moveTo(x, y);
             else ctx.lineTo(x, y);
@@ -811,49 +872,42 @@ function drawWaveform() {
         ctx.stroke();
     });
 
-// ==========================================
+    // ==========================================
     // 4. トリガーレベルラインと矢印の描画
     // ==========================================
-    // CH1の電圧レンジを基準にレベル位置を計算
     const trigRange = VOLT_STEPS[scopeState.voltIndexCH1];
     const trigLevelPx = (scopeState.trigger.level / trigRange) * pixelsPerGrid;
-    
-    // Y座標を計算 (画面外にはみ出ないように制限をかけるとよりリアルですが、今回はそのまま)
     const trigY = centerY - trigLevelPx;
     
     // --- (A) 点線の描画 ---
     ctx.beginPath();
-    ctx.strokeStyle = "rgba(255, 165, 0, 0.7)"; // オレンジ
-    ctx.setLineDash([5, 5]); // 点線
+    ctx.strokeStyle = "rgba(255, 165, 0, 0.7)";
+    ctx.setLineDash([5, 5]);
     ctx.lineWidth = 1;
     ctx.moveTo(0, trigY);
     ctx.lineTo(canvas.width, trigY);
     ctx.stroke();
-    ctx.setLineDash([]); // 実線に戻す
+    ctx.setLineDash([]);
 
-    // --- (B) ★追加: 右端の矢印マーカー描画 ---
-    const markerWidth = 24;  // マーカーの幅
-    const markerHeight = 18; // マーカーの高さ
-    const markerX = canvas.width; // 画面の右端
+    // --- (B) 右端の矢印マーカー描画 ---
+    const markerWidth = 24;  
+    const markerHeight = 18; 
+    const markerX = canvas.width; 
     
     ctx.beginPath();
-    ctx.fillStyle = "rgba(255, 165, 0, 1)"; // 不透明なオレンジ
-    
-    // ホームベース型を横に倒した形（左向きの矢印）を描く
-    ctx.moveTo(markerX - markerWidth, trigY); // 左の先端
-    ctx.lineTo(markerX - (markerWidth * 0.4), trigY - (markerHeight / 2)); // 左上の角
-    ctx.lineTo(markerX, trigY - (markerHeight / 2)); // 右上の角
-    ctx.lineTo(markerX, trigY + (markerHeight / 2)); // 右下の角
-    ctx.lineTo(markerX - (markerWidth * 0.4), trigY + (markerHeight / 2)); // 左下の角
+    ctx.fillStyle = "rgba(255, 165, 0, 1)";
+    ctx.moveTo(markerX - markerWidth, trigY);
+    ctx.lineTo(markerX - (markerWidth * 0.4), trigY - (markerHeight / 2));
+    ctx.lineTo(markerX, trigY - (markerHeight / 2));
+    ctx.lineTo(markerX, trigY + (markerHeight / 2));
+    ctx.lineTo(markerX - (markerWidth * 0.4), trigY + (markerHeight / 2));
     ctx.closePath();
     ctx.fill();
     
-    // マーカーの中に「T」の文字を書く
-    ctx.fillStyle = "black"; // 文字は黒
+    ctx.fillStyle = "black";
     ctx.font = "bold 11px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    // マーカーの四角い部分の中心あたりに文字を置く
     ctx.fillText("T", markerX - (markerWidth * 0.25), trigY + 1);
 
     // ==========================================
@@ -862,39 +916,44 @@ function drawWaveform() {
     ctx.font = "bold 16px sans-serif";
     ctx.textAlign = "left";
 
-    // --- CH1 情報 ---
     const vDiv1 = VOLT_STEPS[scopeState.voltIndexCH1];
     const vText1 = vDiv1 >= 1 ? `${vDiv1.toFixed(2)}V` : `${(vDiv1*1000).toFixed(0)}mV`;
     const marker1 = (scopeState.activeChannel === 'CH1') ? "▶ " : "   ";
     ctx.fillStyle = "yellow";
     ctx.fillText(`${marker1}CH1 ${vText1}`, 20, canvas.height - 20);
 
-    // --- CH2 情報 ---
     const vDiv2 = VOLT_STEPS[scopeState.voltIndexCH2];
     const vText2 = vDiv2 >= 1 ? `${vDiv2.toFixed(2)}V` : `${(vDiv2*1000).toFixed(0)}mV`;
     const marker2 = (scopeState.activeChannel === 'CH2') ? "▶ " : "   ";
     ctx.fillStyle = "cyan";
     ctx.fillText(`${marker2}CH2 ${vText2}`, 200, canvas.height - 20);
 
-    // --- 時間軸 情報 ---
     ctx.fillStyle = "white";
     ctx.textAlign = "center";
     let tText = currentTimeDiv >= 1 ? `${currentTimeDiv.toFixed(2)}s` : 
                 currentTimeDiv >= 0.001 ? `${(currentTimeDiv*1000).toFixed(2)}ms` : `${(currentTimeDiv*1000000).toFixed(0)}us`;
     ctx.fillText(`M ${tText}`, canvas.width / 2, canvas.height - 20);
 
-    // --- トリガー情報 (右上) ---
     ctx.textAlign = "right";
     ctx.fillStyle = "rgba(255, 165, 0, 1)";
     const statusText = scopeState.trigger.isTriggered ? "Trig'd" : "Auto";
-    // トリガーレベルと状態を表示
     ctx.fillText(`T: ${scopeState.trigger.level.toFixed(2)}V (${statusText})`, canvas.width - 10, 30);
 
+
     // ==========================================
-    // 6. メニュー描画
+    // ★ 6. 自動計測 (Measure) の描画を追加
+    // ==========================================
+    // 関数の外で定義した drawMeasurements をここで呼び出します
+    if (typeof drawMeasurements === 'function') {
+        drawMeasurements();
+    }
+
+    // ==========================================
+    // 7. メニュー描画
     // ==========================================
     drawMenu();
 }
+
 function animationLoop() {
     if (scopeState.isOn && scopeState.isRunning) {
         scopeState.timeOffset -= 0.0001; 
