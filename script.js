@@ -25,6 +25,7 @@ const scopeState = {
     
     timeOffset: 0,    // 波形アニメーション用
     currentMenu: null, // 表示中のメニュー
+    showMeasure: false, // 自動計測表示のON/OFF
 
     trigger: {
         level: 4.0,       // トリガーレベル (V)
@@ -894,6 +895,45 @@ function drawWaveform() {
     // 6. メニュー描画
     // ==========================================
     drawMenu();
+
+    if (scopeState.showMeasure) {
+        // 現在アクティブなチャンネルのデータを取得（CH1かCH2）
+        const targetCh = scopeState.activeChannel; 
+        const signal = scopeState.signals[targetCh];
+
+        // 常に最新の振幅と周波数を取得！
+        const currentAmp = signal.amplitude;
+        const currentFreq = signal.frequency;
+
+        // Vp-pの計算（振幅の2倍）
+        const vpp = (currentAmp * 2).toFixed(2);
+
+        // 周波数の単位調整 (1000Hz以上ならkHzにする)
+        let freqDisplay = "";
+        if (currentFreq >= 1000) {
+            freqDisplay = (currentFreq / 1000).toFixed(2) + " kHz";
+        } else {
+            freqDisplay = currentFreq.toFixed(2) + " Hz";
+        }
+
+        // --- 描画処理 ---
+        // 背景の黒い半透明ボックスを描画（右上の邪魔にならない位置に配置）
+        ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+        // メニューが開いている時とかぶらないように少し内側に配置
+        ctx.fillRect(canvas.width - 250, 40, 140, 70); 
+
+        // 文字の設定
+        ctx.fillStyle = "#00FF00"; // 蛍光グリーン
+        ctx.font = "bold 14px sans-serif";
+        ctx.textAlign = "left"; // 文字を左揃えにする
+
+        // 文字の描画
+        ctx.fillText(`[${targetCh}]`, canvas.width - 240, 60);
+        ctx.fillText(`Vp-p: ${vpp} V`, canvas.width - 240, 80);
+        ctx.fillText(`Freq: ${freqDisplay}`, canvas.width - 240, 100);
+    }
+
+
 }
 function animationLoop() {
     if (scopeState.isOn && scopeState.isRunning) {
@@ -952,9 +992,9 @@ containers.forEach(container => {
                 scopeState.currentMenu = null;
                 updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
                 return;
-            }else{
-            scopeState.activeChannel = 'CH1';    // 操作対象をCH1に
-            scopeState.currentMenu = 'CH1_MENU'; // メニューを開く
+            } else {
+                scopeState.activeChannel = 'CH1';    // 操作対象をCH1に
+                scopeState.currentMenu = 'CH1_MENU'; // メニューを開く
             }
             
             updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
@@ -968,9 +1008,9 @@ containers.forEach(container => {
                 scopeState.currentMenu = null;
                 updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
                 return;
-            }else{
-            scopeState.activeChannel = 'CH2';    // 操作対象をCH2に
-            scopeState.currentMenu = 'CH2_MENU'; // メニューを開く
+            } else {
+                scopeState.activeChannel = 'CH2';    // 操作対象をCH2に
+                scopeState.currentMenu = 'CH2_MENU'; // メニューを開く
             }
             
             updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
@@ -998,10 +1038,9 @@ containers.forEach(container => {
             }
             
             // [E] Run/Stopボタン
-            else if (title === 'RunStop') {
+            if (title === 'RunStop') {
                 scopeState.isRunning = !scopeState.isRunning;
             }
-            
             // [F] AutoSetボタン (簡易リセット機能)
             else if (title === 'AutoSet' && scopeState.isOn) {
                 // 適当に見やすい値にリセットする演出
@@ -1012,6 +1051,15 @@ containers.forEach(container => {
                 scopeState.currentMenu = null;
                 console.log("AutoSet executed");
             }
+            // [G] Measボタンがクリックされた時の処理
+            else if (title === 'Meas' || title === 'Measure') {
+                if (!scopeState.isOn) return;
+                // 表示のON/OFFを切り替える
+                scopeState.showMeasure = !scopeState.showMeasure;
+                        
+                // ついでにメニューも開く/閉じる場合は以下を追加しても良いです
+                scopeState.currentMenu = scopeState.showMeasure ? 'Measure' : null;
+            }        
         }
     });
     // --- マウスホイールイベント (ツマミ用) ---
@@ -1023,7 +1071,19 @@ containers.forEach(container => {
         // 電圧ツマミ
         if (title === 'KNOB_VOLT' || title === 'Volt1' || title === 'Volt2' || title === 'Volt3' || title === 'Volt4') {
             e.preventDefault();
-            if (scopeState.activeChannel === 'CH1') {
+
+            // どのツマミかを判定（モデルによってtitleが違うため、両方に対応）
+            // 例: Volt1, Volt3 は CH1用 / Volt2, Volt4 は CH2用
+            const isCH1Knob = (title === 'Volt1' || title === 'Volt3');
+            const isCH2Knob = (title === 'Volt2' || title === 'Volt4');
+            
+            // Agilentモデルなどで 'KNOB_VOLT' と共通の名前になっている場合は、
+            // 便宜上今まで通り activeChannel を参照するようにしておきます
+            let targetCH = scopeState.activeChannel; 
+            if (isCH1Knob) targetCH = 'CH1';
+            if (isCH2Knob) targetCH = 'CH2';
+
+            if (targetCH === 'CH1') {
                 if (e.deltaY > 0) {
                     if (scopeState.voltIndexCH1 < VOLT_STEPS.length - 1) scopeState.voltIndexCH1++;
                 } else {
@@ -1088,7 +1148,7 @@ containers.forEach(container => {
     // ★ここに「機能が実装されている（クリックやホイールで動く）ボタン」の名前を登録します
     const activeFeatures = [
         // 電源・基本操作
-        "電源ボタン", "RunStop", "AutoSet", 
+        "電源ボタン", "RunStop", "AutoSet", "Meas",
         
         // チャンネル操作
         "CH1_MENU", "CH2_MENU", "Ch1", "Ch2",
