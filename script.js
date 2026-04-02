@@ -27,6 +27,14 @@ const scopeState = {
     currentMenu: null, // 表示中のメニュー
     showMeasure: false, // 自動計測表示のON/OFF
 
+    cursor: {
+        show: false,       // カーソルのON/OFF
+        type: 'time',      // 'time'(縦線) または 'volt'(横線)
+        posA: 150,         // カーソルAのCanvas上のX座標(初期値)
+        posB: 350,         // カーソルBのCanvas上のX座標(初期値)
+        target: 'A'    // ★現在ツマミで動かせる対象（'A' または 'B'）
+    },
+
     trigger: {
         level: 4.0,       // トリガーレベル (V)
         slope: 'rising',  // 立ち上がり ('rising') か 立下り ('falling')
@@ -933,7 +941,52 @@ function drawWaveform() {
         ctx.fillText(`Freq: ${freqDisplay}`, canvas.width - 240, 100);
     }
 
+    if (scopeState.cursor.show) {
+        ctx.save();
+        
+        // 1. カーソル線の描画
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]); // 点線
+        
+        // カーソルAの線 (現在操作中なら少し明るくするなど色を変えると分かりやすいです)
+        ctx.beginPath();
+        ctx.strokeStyle = scopeState.cursor.target === 'A' ? "#00FFFF" : "rgba(255,255,255,0.5)";
+        ctx.moveTo(scopeState.cursor.posA, 0);
+        ctx.lineTo(scopeState.cursor.posA, canvas.height);
+        ctx.stroke();
 
+        // カーソルBの線
+        ctx.beginPath();
+        ctx.strokeStyle = scopeState.cursor.target === 'B' ? "#00FFFF" : "rgba(255,255,255,0.5)";
+        ctx.moveTo(scopeState.cursor.posB, 0);
+        ctx.lineTo(scopeState.cursor.posB, canvas.height);
+        ctx.stroke();
+
+        // 2. 値の計算
+        const pixelsPerDiv = 50; // ※お使いのグリッドの1マスのピクセル幅
+        const timePerDiv = TIME_STEPS[scopeState.timeIndex]; 
+        const timePerPixel = timePerDiv / pixelsPerDiv;
+        
+        const pixelDiff = Math.abs(scopeState.cursor.posB - scopeState.cursor.posA);
+        const deltaT = pixelDiff * timePerPixel;
+        const freq = deltaT > 0 ? (1 / deltaT) : 0;
+
+        // 3. 値の描画表示
+        ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+        ctx.fillRect(10, 10, 160, 60); // 背景ボックス
+        
+        ctx.fillStyle = "#FFF";
+        ctx.font = "14px sans-serif";
+        ctx.setLineDash([]); 
+        
+        const displayDeltaT = deltaT >= 1 ? `${deltaT.toFixed(2)} s` : `${(deltaT * 1000).toFixed(2)} ms`;
+        const displayFreq = freq >= 1000 ? `${(freq / 1000).toFixed(2)} kHz` : `${freq.toFixed(2)} Hz`;
+
+        ctx.fillText(`Δt : ${displayDeltaT}`, 20, 35);
+        ctx.fillText(`1/Δt : ${displayFreq}`, 20, 55);
+        
+        ctx.restore();
+    }
 }
 function animationLoop() {
     if (scopeState.isOn && scopeState.isRunning) {
@@ -1059,7 +1112,22 @@ containers.forEach(container => {
                         
                 // ついでにメニューも開く/閉じる場合は以下を追加しても良いです
                 scopeState.currentMenu = scopeState.showMeasure ? 'Measure' : null;
-            }        
+            }
+
+            else if (title === 'Cursr' || title === 'Cursors') {
+            if (!scopeState.isOn) return;
+            
+            // 状態をローテーションさせる (非表示 -> A操作 -> B操作 -> 非表示)
+            if (!scopeState.cursor.show) {
+                scopeState.cursor.show = true;
+                scopeState.cursor.target = 'A';
+            } else if (scopeState.cursor.target === 'A') {
+                scopeState.cursor.target = 'B';
+            } else {
+                scopeState.cursor.show = false;
+            }
+            drawWaveform(); 
+        }
         }
     });
     // --- マウスホイールイベント (ツマミ用) ---
@@ -1120,6 +1188,29 @@ containers.forEach(container => {
                 scopeState.trigger.level -= step;
             }
         }
+
+        else if (title === 'KNOB_CURSOR' || title === 'Cursrツマミ' ) {
+        e.preventDefault();
+        if (!scopeState.cursor.show) return; // カーソル非表示時は何もしない
+
+        // スクロール方向の判定 (奥に回すか手前に回すか)
+        const direction = e.deltaY > 0 ? 1 : -1;
+        const step = 5; // 1回のスクロールで動くピクセル数（好みの速度に調整してください）
+
+        // 選択されているカーソルを動かす
+        if (scopeState.cursor.target === 'A') {
+            scopeState.cursor.posA += direction * step;
+            // 画面外に出ないように制限する場合
+            // scopeState.cursor.posA = Math.max(0, Math.min(canvas.width, scopeState.cursor.posA));
+        } else if (scopeState.cursor.target === 'B') {
+            scopeState.cursor.posB += direction * step;
+        }
+        drawWaveform(); 
+    }
+
+
+
+
     }, { passive: false });
 
 
@@ -1148,7 +1239,7 @@ containers.forEach(container => {
     // ★ここに「機能が実装されている（クリックやホイールで動く）ボタン」の名前を登録します
     const activeFeatures = [
         // 電源・基本操作
-        "電源ボタン", "RunStop", "AutoSet", "Meas",
+        "電源ボタン", "RunStop", "AutoSet", "Meas",'Cursr',
         
         // チャンネル操作
         "CH1_MENU", "CH2_MENU", "Ch1", "Ch2",
@@ -1156,7 +1247,7 @@ containers.forEach(container => {
         // ツマミ（ホイール操作できるもの）
         "KNOB_TIME", "KNOB_VOLT",
         "Volt1", "Volt2", "Volt3", "Volt4",
-        "Level",
+        "Level",'Cursrツマミ',
         
     ];
 
