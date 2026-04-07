@@ -293,3 +293,129 @@ body {
     padding: 2px 5px;
     border-radius: 3px;
 }
+
+/* --- 実験器具サイドバーのスタイル --- */
+.equipment-sidebar {
+    position: fixed;
+    top: 50px;       /* 上からの位置 */
+    right: -250px;   /* 初期状態は画面外（右に隠す） */
+    width: 250px;
+    height: 100%;
+    background-color: #f8f9fa;
+    box-shadow: -2px 0 10px rgba(0,0,0,0.2);
+    transition: right 0.3s ease; /* スライドアニメーション */
+    z-index: 1000;
+}
+
+/* メニューが開いた時の状態（JSでこのクラスを付与する） */
+.equipment-sidebar.open {
+    right: 0;
+}
+
+/* 画面端に飛び出しているタブ */
+.sidebar-tab {
+    position: absolute;
+    left: -45px;
+    top: 20px;
+    width: 45px;
+    height: 120px;
+    background-color: #34495e;
+    color: #fff;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 8px 0 0 8px;
+    /* 縦書きにする設定 */
+    writing-mode: vertical-rl;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    letter-spacing: 2px;
+}
+
+/* リストのデザイン */
+.sidebar-content {
+    padding: 20px;
+}
+
+.equipment-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.equipment-list li {
+    padding: 15px 10px;
+    margin-bottom: 5px;
+    background-color: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background 0.2s;
+}
+
+.equipment-list li:hover {
+    background-color: #e3f2fd; /* マウスオーバーで薄い青色 */
+    border-color: #2980b9;
+}
+
+/* style.css の末尾に追加 */
+
+/* 全体の作業スペース */
+#lab-workspace {
+    position: relative;
+    width: 100%;
+    height: 100vh; /* 画面全体を作業スペースに */
+    overflow: hidden;
+}
+
+/* 器具共通のドラッグ用コンテナ */
+.draggable-equipment {
+    position: absolute; /* 自由配置 */
+    z-index: 10;        /* Canvasより前面に */
+    background: white;
+    border: 2px solid #34495e;
+    border-radius: 8px 8px 0 0;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    overflow: hidden; /* ヘッダーからはみ出さないように */
+    cursor: default;  /* 基本は通常のマウス */
+}
+
+/* ドラッグ用の持ち手（ヘッダー） */
+.equipment-header {
+    padding: 8px 15px;
+    background-color: #34495e;
+    color: white;
+    font-weight: bold;
+    cursor: move; /* 掴めるようなカーソルにする */
+    user-select: none; /* テキスト選択を防ぐ */
+}
+
+/* --- ドラッグ枠の余白を強制的に消去する設定 --- */
+
+/* 1. 外枠を中身（画像）のサイズに完全に合わせる */
+.draggable-equipment {
+    width: fit-content !important;
+    height: fit-content !important;
+    background: transparent !important; /* 背景のグレーなどを消す */
+}
+
+/* 2. 中のコンテナの「画面いっぱいに広がる設定」を全て強制リセット */
+.draggable-equipment .main-stage,
+.draggable-equipment .instrument-container {
+    width: auto !important;
+    height: auto !important;
+    min-width: 0 !important;   /* ← これが余白の最大の原因になりやすいです */
+    min-height: 0 !important;  /* ← 画面高さ(100vh)などを無効化します */
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+}
+
+/* 3. 画像の下にできる謎の数ピクセルの隙間を消す */
+.draggable-equipment img {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}

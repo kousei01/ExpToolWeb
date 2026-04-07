@@ -211,6 +211,8 @@ const descriptions = {
     "CursorA": "【カーソルツマミ A】\n1本目のカーソル（測定用の点線）を移動させます。",
     "CursorB": "【カーソルツマミ B】\n2本目のカーソル（測定用の点線）を移動させます。",
 
+    "output": "【出力端子】\nファンクションジェネレータの出力や、外部トリガー入力などの端子を表します。\nここをクリックして信号の接続状態を切り替えます。"
+
 };
 
 
@@ -1473,4 +1475,79 @@ function quitTestMode() {
     // 3. フィードバック（正解・不正解の文字）をリセットしておく
     document.getElementById('test-feedback').innerHTML = "";
     document.getElementById('test-feedback').className = "";
+}
+
+// script.js の末尾に追加
+
+// ==========================================
+// ドラッグ＆ドロップの実装
+// ==========================================
+
+// すべてのdraggable-equipment要素を取得
+const draggables = document.querySelectorAll('.draggable-equipment');
+
+draggables.forEach(elm => {
+    let x_pos = 0, y_pos = 0, x_elem = 0, y_elem = 0;
+
+    // 器具全体でマウスが押された時にドラッグ開始
+    elm.addEventListener('mousedown', function(e) {
+        // canvas要素上のクリックを無視（波形操作で使用するため）
+        if (e.target.tagName === 'CANVAS') return;
+        
+        // 器具を一番前面に持ってくる (z-index調整)
+        bringToFront(elm);
+
+        // マウスの現在位置（画面全体基準）を取得
+        x_pos = e.clientX;
+        y_pos = e.clientY;
+        
+        // 器具の左上の現在位置を取得
+        x_elem = elm.offsetLeft;
+        y_elem = elm.offsetTop;
+        
+        // マウス移動イベントと離したイベントをdocumentに登録（器具の外に出ても追従するため）
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        e.preventDefault(); // 予期せぬ挙動防止
+    });
+
+    // マウス移動中の処理
+    function onMouseMove(e) {
+        // マウスが動いた分だけ、器具の位置を更新
+        elm.style.left = (x_elem + e.clientX - x_pos) + 'px';
+        elm.style.top = (y_elem + e.clientY - y_pos) + 'px';
+    }
+
+    // マウスを離した時の処理（ドラッグ終了）
+    function onMouseUp() {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+    }
+});
+
+// 器具を一番前面に持ってくる
+function bringToFront(elm) {
+    // 他の器具のz-indexを下げ、選択されたものだけ上げる
+    draggables.forEach(d => d.style.zIndex = 10);
+    elm.style.zIndex = 100;
+}
+
+// ==========================================
+// 実験器具メニューの制御 (前回から修正)
+// ==========================================
+function toggleSidebar() {
+    document.getElementById('equipment-sidebar').classList.toggle('open');
+}
+
+// 器具の表示/非表示を個別に切り替える（トグル）
+function toggleEquipment(eqId) {
+    const container = document.getElementById(eqId + '-container');
+    if (!container) return;
+
+    if (container.style.display === 'none') {
+        container.style.display = 'block'; // 表示
+        bringToFront(container); // 前面に持ってくる
+    } else {
+        container.style.display = 'none'; // 非表示
+    }
 }
