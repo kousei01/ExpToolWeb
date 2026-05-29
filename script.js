@@ -18,6 +18,7 @@ const scopeState = {
     isOn: false,      // 電源の状態
     isRunning: true,  // 波形の動き
     activeChannel: 'CH1',
+    inputSource: 'internal', // 入力信号のソース ('internal' または 'power_supply')
     
     voltIndexCH1: 6,     // CH1の電圧 (初期値 1V)
     voltIndexCH2: 6,     // CH2の電圧 (初期値 1V)
@@ -59,6 +60,23 @@ const scopeState = {
     }
 
 };
+
+
+// ==========================================
+// 直流電源 (GPD-4303S) の状態管理
+// ==========================================
+const psState = {
+    isOn: false,          // 電源のON/OFF
+    isOutputOn: false,    // OUTPUTボタンのON/OFF
+    activeChannel: 'CH1', // 現在操作中のチャンネル (CH1 or CH2)
+    
+    // 各チャンネルの設定値
+    ch1: { voltage: 0.0, current: 0.00 },
+    ch2: { voltage: 0.0, current: 0.00 },
+};
+
+
+
 
 // メニューの内容データ
 // --- ★変更: Hantek用のメニュー定義 (DSO5000/2000系を想定) ---
@@ -135,8 +153,8 @@ const descriptions = {
     "CH2_MENU": "CH2の詳細設定を行います。",
     "CH3_MENU": "CH3の詳細設定を行います。",
     "CH4_MENU": "CH4の詳細設定を行います。",
-    "Ch1": "CH1入力端子。",
-    "Ch2": "CH2入力端子。",
+    "Ch1": "CH1入力端子。\n🔌 直流電源と結線するには：PS端子をクリックしてから、この端子をクリック\n（または Shift+クリックで選択開始）\n右クリックで切断",
+    "Ch2": "CH2入力端子。\n🔌 直流電源と結線するには：PS端子をクリックしてから、この端子をクリック\n（または Shift+クリックで選択開始）\n右クリックで切断",
     "Ch3": "CH3入力端子。",
     "Ch4": "CH4入力端子。",
 
@@ -214,6 +232,20 @@ const descriptions = {
     "output": "【出力端子】\nファンクションジェネレータの出力や、外部トリガー入力などの端子を表します。\nここをクリックして信号の接続状態を切り替えます。"
 
 };
+
+// ツールチップの説明文（descriptionsオブジェクトの中に追加）
+Object.assign(descriptions, {
+    "ps_power": "【直流電源 電源】\n直流電源の電源をオン・オフします。",
+    "ch1btn": "【CH1選択】\n電圧・電流ツマミの操作対象をCH1に切り替えます。",
+    "ch2btn": "【CH2選択】\n電圧・電流ツマミの操作対象をCH2に切り替えます。",
+    "volt": "【電圧(V)ツマミ】\nホイール操作で選択中のチャンネルの電圧を変更します。",
+    "curr": "【電流(A)ツマミ】\nホイール操作で選択中のチャンネルの電流上限を変更します。",
+    "output": "【出力(Output)】\n設定した電圧・電流の出力をオン・オフします。",
+    "ch1pura": "CH1 プラス端子（赤）\n🔌 クリックして選択し、オシロの端子と接続できます\n右クリックで切断",
+    "ch1mai":  "CH1 マイナス端子（黒）\n🔌 クリックして選択し、オシロの端子と接続できます\n右クリックで切断",
+    "ch2pura": "CH2 プラス端子（赤）\n🔌 クリックして選択し、オシロの端子と接続できます\n右クリックで切断",
+    "ch2mai":  "CH2 マイナス端子（黒）\n🔌 クリックして選択し、オシロの端子と接続できます\n右クリックで切断",
+});
 
 
 // --- 2. モデル切り替え機能 ---
@@ -300,36 +332,19 @@ function setZoom(newZoom) {
 
         // 1. 変形適用 (左上基準)
         container.style.transform = `scale(${scale})`;
+        // ドラッグ移動に対応させるため、marginによる余白調整をすべて無効化(0)にします
+        container.style.marginLeft = '0px';
+        container.style.marginTop = '0px';
+        container.style.marginBottom = '0px';
+        container.style.marginRight = '0px';
 
-        // 2. 位置計算
-        // 親枠より画像が小さい -> 余白を入れて中央へ
-        // 親枠より画像が大きい -> 余白0で左詰め（スクロールさせるため）
-        
-        let marginLeft = 0;
-        let marginTop = 0; // 縦方向も中央にしたい場合用
-
-        if (scaledWidth < viewWidth) {
-            marginLeft = (viewWidth - scaledWidth) / 2;
+        // 親要素（ドラッグ判定枠）のサイズを、ズーム後の実際の表示サイズに強制的に合わせる
+        const wrapper = container.closest('.draggable-equipment');
+        if (wrapper) {
+            // style.css にある !important を上書きして確実にするために setProperty を使用
+            wrapper.style.setProperty('width', `${scaledWidth}px`, 'important');
+            wrapper.style.setProperty('height', `${scaledHeight}px`, 'important');
         }
-
-        // (任意) 縦方向も中央寄せしたい場合は以下のコメントを外す
-        /*
-        if (scaledHeight < viewHeight) {
-            marginTop = (viewHeight - scaledHeight) / 2;
-        }
-        */
-
-        // 3. マージン適用
-        container.style.marginLeft = `${marginLeft}px`;
-        container.style.marginTop = `${marginTop}px`; // 通常は0
-
-        // 4. スクロール領域の確保
-        // transformで拡大した分を margin-bottom/right で押し広げる
-        const marginBottom = (scaledHeight - originalHeight) + 50; 
-        const marginRight = (scaledWidth - originalWidth);
-
-        container.style.marginBottom = `${marginBottom}px`;
-        container.style.marginRight = `${marginRight}px`;
     });
 }
 function changeZoom(amount) { setZoom(currentZoom + amount); }
@@ -371,6 +386,24 @@ function updateControlPanelUI() {
     if (activeBtn) activeBtn.classList.add('active');
 }
 
+
+// 入力ソースを切り替える関数
+function switchInputSource(source) {
+    scopeState.inputSource = source;
+    
+    // ボタンの見た目（青いハイライト）を切り替え
+    document.getElementById('btn-src-internal').classList.remove('active');
+    document.getElementById('btn-src-ps').classList.remove('active');
+    
+    if (source === 'internal') {
+        document.getElementById('btn-src-internal').classList.add('active');
+    } else {
+        document.getElementById('btn-src-ps').classList.add('active');
+    }
+    
+    // 切り替えたらすぐに波形を再描画する
+    if (typeof drawAgilent === 'function') drawAgilent();
+}
 
 
 
@@ -809,8 +842,32 @@ function drawWaveform() {
             //   [画面の時間] + [トリガーによる固定] - [画面中央への補正]
             const signalTime = timeSpan + drawTimeOffset - centerTimeShift;
             
-            // 3. その時間の電圧を取得
-            const rawVolt = getSignalVoltage(ch, signalTime);
+            // ========================================================
+            // ★ 入力ソースの分岐（直流電源との連携）
+            // ========================================================
+            let rawVolt = 0;
+            if (scopeState.inputSource === 'power_supply') {
+                // 【直流電源モード】結線があり、電源と出力が両方ONの時だけ電圧を反映
+                const termName = ch === 'CH1' ? 'Ch1' : 'Ch2';
+                const conn = wiringState.connections.find(c => c.oscTerminal === termName);
+                if (conn && psState.isOn && psState.isOutputOn) {
+                    // 【修正】マイナス端子（mai）に繋がっている時は電圧の正負を反転させる
+                    if (conn.psTerminal === 'ch1pura') {
+                        rawVolt = psState.ch1.voltage;
+                    } else if (conn.psTerminal === 'ch1mai') {
+                        rawVolt = -psState.ch1.voltage; // 💡マイナス電圧にする
+                    } else if (conn.psTerminal === 'ch2pura') {
+                        rawVolt = psState.ch2.voltage;
+                    } else if (conn.psTerminal === 'ch2mai') {
+                        rawVolt = -psState.ch2.voltage; // 💡マイナス電圧にする
+                    }
+                }
+                // 結線なし → rawVolt = 0 のまま（フラットライン）
+            } else {
+                // 【内部テスト信号モード】これまでの計算式を使用
+                rawVolt = getSignalVoltage(ch, signalTime);
+            }
+            // ========================================================
             
             // 4. 電圧をY座標に変換
             //   Canvasは上が0、下がプラスなのでマイナスする
@@ -822,7 +879,7 @@ function drawWaveform() {
         ctx.stroke();
     });
 
-// ==========================================
+    // ==========================================
     // 4. トリガーレベルラインと矢印の描画
     // ==========================================
     // CH1の電圧レンジを基準にレベル位置を計算
@@ -1018,6 +1075,19 @@ containers.forEach(container => {
 
         const title = target.title; // 例: "電源ボタン", "CH1_MENU", "Measure"
 
+        // [0] 端子クリック（結線システム）
+        if (PS_TERMINALS.includes(title)) {
+            handleTerminalClick(title, target);
+            return;
+        }
+        // オシロ端子（Ch1/Ch2）: 選択中の端子がある場合、または直流電源モード時は結線処理
+        if (OSC_TERMINALS.includes(title)) {
+            if (wiringState.pendingTerminal || e.shiftKey) {
+                handleTerminalClick(title, target);
+                return;
+            }
+        }
+
         // [A] 電源ボタンの処理
         if (title === '電源ボタン') {
             target.classList.toggle('active'); // activeクラスの付け外し
@@ -1053,6 +1123,32 @@ containers.forEach(container => {
             }
             
             updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
+        }
+
+            // --- 直流電源のボタン操作 ---
+        else if (title === 'ps_power') {
+            psState.isOn = !psState.isOn;
+            if (!psState.isOn) psState.isOutputOn = false; // 電源OFFで出力も強制OFF
+            console.log("直流電源:", psState.isOn ? "ON" : "OFF");
+            updatePSDisplay();
+        }
+        else if (title === 'ch1btn') {
+            if (!psState.isOn) return;
+            psState.activeChannel = 'CH1';
+            console.log("直流電源 操作対象: CH1");
+        }
+        else if (title === 'ch2btn') {
+            if (!psState.isOn) return;
+            psState.activeChannel = 'CH2';
+            console.log("直流電源 操作対象: CH2");
+        }
+        else if (title === 'output') {
+            if (!psState.isOn) return;
+            psState.isOutputOn = !psState.isOutputOn;
+            console.log("直流電源 出力:", psState.isOutputOn ? "ON" : "OFF");
+            
+            // ★ ここでオシロスコープに電圧の値を渡す処理を呼ぶことになります
+            updateOscilloscopeSignal(); 
         }
         
         // [C] チャンネル選択 & メニュー表示 (CH2)
@@ -1190,6 +1286,36 @@ containers.forEach(container => {
                 scopeState.trigger.level -= step;
             }
         }
+        // --- 直流電源のツマミ操作 ---
+        else if (title === 'volt') {
+            e.preventDefault();
+            if (!psState.isOn) return; // 電源OFF時は無効
+            
+            const ch = psState.activeChannel.toLowerCase(); // 'ch1' または 'ch2'
+            if (e.deltaY < 0) { // 手前に回す（増やす）
+                psState[ch].voltage = Math.min(30.0, psState[ch].voltage + 0.1);
+            } else { // 奥に回す（減らす）
+                psState[ch].voltage = Math.max(0.0, psState[ch].voltage - 0.1);
+            }
+            
+            console.log(`${psState.activeChannel} 電圧: ${psState[ch].voltage.toFixed(1)} V`);
+            updatePSDisplay();
+            if (typeof updateOscilloscopeSignal === 'function') updateOscilloscopeSignal();
+        }
+        else if (title === 'curr') {
+            e.preventDefault();
+            if (!psState.isOn) return;
+            
+            const ch = psState.activeChannel.toLowerCase();
+            if (e.deltaY < 0) {
+                psState[ch].current = Math.min(3.00, psState[ch].current + 0.01);
+            } else {
+                psState[ch].current = Math.max(0.00, psState[ch].current - 0.01);
+            }
+            
+            console.log(`${psState.activeChannel} 電流: ${psState[ch].current.toFixed(2)} A`);
+            updatePSDisplay();
+        }
 
         else if (title === 'KNOB_CURSOR' || title === 'Cursrツマミ' ) {
         e.preventDefault();
@@ -1208,6 +1334,8 @@ containers.forEach(container => {
             scopeState.cursor.posB += direction * step;
         }
         drawWaveform(); 
+
+
     }
 
 
@@ -1250,6 +1378,10 @@ containers.forEach(container => {
         "KNOB_TIME", "KNOB_VOLT",
         "Volt1", "Volt2", "Volt3", "Volt4",
         "Level",'Cursrツマミ',
+
+        'ps_power', 'ch1btn', 'ch2btn', 'volt', 'curr', 'output',
+        'ch1pura', 'ch1mai', 'ch2pura', 'ch2mai', 'grd',
+        'Ch1', 'Ch2', 'Ch3', 'Ch4'
         
     ];
 
@@ -1306,7 +1438,356 @@ containers.forEach(container => {
             targetContainer.appendChild(div);
         });
     });
-})();// アプリケーション開始
+})();
+
+// =======================================================================
+//  結線（ワイヤー）システム
+// =======================================================================
+
+// 結線の状態管理
+// 接続情報: { psTerminal: 'ch1pura'|'ch1mai'|'ch2pura'|'ch2mai'|'grd', oscTerminal: 'Ch1'|'Ch2', color: string }
+const wiringState = {
+    connections: [],       // 確定済みの接続リスト
+    pendingTerminal: null, // 最初にクリックした端子の情報 { elementId, terminalName, side:'ps'|'osc', color }
+};
+
+// 端子ごとのワイヤー色
+const TERMINAL_COLORS = {
+    'ch1pura': '#ff4444', // 赤（+）
+    'ch2pura': '#ff8800', // オレンジ（+）
+    'ch1mai':  '#222222', // 黒（−）
+    'ch2mai':  '#222222', // 黒（−）
+    'grd':     '#007700', // 緑（GND）
+    'Ch1':     '#ffff00', // 黄（オシロCH1）
+    'Ch2':     '#00ffff', // 水色（オシロCH2）
+};
+
+// SVGオーバーレイを生成・取得
+function getWireSVG() {
+    let svg = document.getElementById('wire-overlay');
+    if (!svg) {
+        svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.id = 'wire-overlay';
+        svg.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:500;';
+        document.body.appendChild(svg);
+    }
+    return svg;
+}
+
+// 端子のホットスポット要素の画面上の中心座標を取得
+function getTerminalScreenPos(hotspotEl) {
+    const rect = hotspotEl.getBoundingClientRect();
+    return {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+    };
+}
+
+// ワイヤーを全て再描画
+function redrawWires() {
+    const svg = getWireSVG();
+    svg.innerHTML = ''; // 一旦クリア
+
+    // 【追加】現在表示されている（display: none でない）オシロスコープのコンテナを取得
+    const activeOscContainer = Array.from(document.querySelectorAll('#osc-container .instrument-container'))
+                                    .find(el => el.style.display !== 'none');
+
+    // 確定済みの接続を描画
+    wiringState.connections.forEach(conn => {
+        const psEl  = document.getElementById('btn-' + conn.psTerminal);
+        
+        // 【修正】全体から探すのではなく、現在アクティブなオシロスコープのコンテナ内から端子を探す
+        let oscEl = null;
+        if (activeOscContainer) {
+            oscEl = activeOscContainer.querySelector('#btn-' + conn.oscTerminal) || 
+                    activeOscContainer.querySelector(`[title="${conn.oscTerminal}"]`) ||
+                    activeOscContainer.querySelector(`[alt="${conn.oscTerminal}"]`);
+        }
+
+        if (!psEl || !oscEl) return;
+
+        const p1 = getTerminalScreenPos(psEl);
+        const p2 = getTerminalScreenPos(oscEl);
+        drawWire(svg, p1, p2, conn.color, false);
+    });
+
+    // 選択中（未確定）の端子をハイライト
+    if (wiringState.pendingTerminal) {
+        // 【修正】getElementByIdで再取得せず、保存しておいた要素（el）をそのまま使うことでズレを防止
+        const el = wiringState.pendingTerminal.el;
+        if (el) {
+            const pos = getTerminalScreenPos(el);
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('cx', pos.x);
+            circle.setAttribute('cy', pos.y);
+            circle.setAttribute('r', 12);
+            circle.setAttribute('fill', 'none');
+            circle.setAttribute('stroke', wiringState.pendingTerminal.color);
+            circle.setAttribute('stroke-width', 3);
+            circle.setAttribute('stroke-dasharray', '4 3');
+            circle.style.animation = 'wirePulse 0.8s ease-in-out infinite alternate';
+            svg.appendChild(circle);
+        }
+    }
+}
+
+// ベジェ曲線でワイヤーを描く
+function drawWire(svg, p1, p2, color, dashed) {
+    // ワイヤーの影（立体感）
+    const shadow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const mx = (p1.x + p2.x) / 2;
+    const my = Math.max(p1.y, p2.y) + Math.abs(p2.x - p1.x) * 0.3 + 40;
+    const d = `M ${p1.x} ${p1.y} Q ${mx} ${my} ${p2.x} ${p2.y}`;
+
+    shadow.setAttribute('d', d);
+    shadow.setAttribute('fill', 'none');
+    shadow.setAttribute('stroke', 'rgba(0,0,0,0.35)');
+    shadow.setAttribute('stroke-width', 7);
+    shadow.setAttribute('stroke-linecap', 'round');
+    svg.appendChild(shadow);
+
+    // 本体のワイヤー
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', color);
+    path.setAttribute('stroke-width', 4);
+    path.setAttribute('stroke-linecap', 'round');
+    if (dashed) path.setAttribute('stroke-dasharray', '8 5');
+    svg.appendChild(path);
+
+    // 両端の丸
+    [p1, p2].forEach(p => {
+        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        dot.setAttribute('cx', p.x);
+        dot.setAttribute('cy', p.y);
+        dot.setAttribute('r', 5);
+        dot.setAttribute('fill', color);
+        dot.setAttribute('stroke', 'white');
+        dot.setAttribute('stroke-width', 1.5);
+        svg.appendChild(dot);
+    });
+}
+
+// SVGアニメーション用スタイルを追加
+(function addWireStyles() {
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes wirePulse {
+            from { opacity: 1; r: 10; }
+            to   { opacity: 0.4; r: 14; }
+        }
+        .hotspot.wire-selected {
+            box-shadow: 0 0 0 4px #fff, 0 0 0 7px gold !important;
+            z-index: 200 !important;
+        }
+        .hotspot.wire-connected {
+            border-color: rgba(0,255,100,0.9) !important;
+            background-color: rgba(0,200,80,0.25) !important;
+        }
+        #wire-status-bar {
+            position: fixed;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.82);
+            color: #fff;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-family: sans-serif;
+            z-index: 9999;
+            pointer-events: none;
+            transition: opacity 0.4s;
+            white-space: nowrap;
+        }
+    `;
+    document.head.appendChild(style);
+})();
+
+// ステータスバーにメッセージを表示
+function showWireStatus(msg, durationMs = 2500) {
+    let bar = document.getElementById('wire-status-bar');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'wire-status-bar';
+        document.body.appendChild(bar);
+    }
+    bar.textContent = msg;
+    bar.style.opacity = '1';
+    clearTimeout(bar._hideTimer);
+    bar._hideTimer = setTimeout(() => { bar.style.opacity = '0'; }, durationMs);
+}
+
+// 端子がPS側かオシロ側かを判定
+const PS_TERMINALS  = ['ch1pura','ch1mai','ch2pura','ch2mai','grd'];
+const OSC_TERMINALS = ['Ch1','Ch2'];
+
+function getTerminalSide(name) {
+    if (PS_TERMINALS.includes(name))  return 'ps';
+    if (OSC_TERMINALS.includes(name)) return 'osc';
+    return null;
+}
+
+// 接続情報をもとにオシロスコープの入力電圧を更新
+// 接続情報をもとにオシロスコープの入力電圧を更新
+function updateOscilloscopeSignal() {
+    // CH1/CH2 それぞれについて、結線があるか・電源ONか・出力ONかを確認
+    ['CH1', 'CH2'].forEach(ch => {
+        const termName = ch === 'CH1' ? 'Ch1' : 'Ch2';
+        const conn = wiringState.connections.find(c => c.oscTerminal === termName);
+
+        // 【修正】結線がない場合は、オシロの入力を 0V に戻して終了する
+        if (!conn) {
+            if (scopeState.signals && scopeState.signals[ch]) {
+                scopeState.signals[ch].dcOverride = 0;
+            }
+            return;
+        }
+
+        let psVoltage = 0;
+        if (psState.isOn && psState.isOutputOn) {
+            // 【修正】プラスならそのまま、マイナスなら「-（マイナス）」を掛けて電圧を設定
+            if (conn.psTerminal === 'ch1pura') {
+                psVoltage = psState.ch1.voltage;
+            } else if (conn.psTerminal === 'ch1mai') {
+                psVoltage = -psState.ch1.voltage; // 💡マイナス電圧にする
+            } else if (conn.psTerminal === 'ch2pura') {
+                psVoltage = psState.ch2.voltage;
+            } else if (conn.psTerminal === 'ch2mai') {
+                psVoltage = -psState.ch2.voltage; // 💡マイナス電圧にする
+            }
+        }
+        
+        if (scopeState.signals && scopeState.signals[ch]) {
+            scopeState.signals[ch].dcOverride = psVoltage;
+        }
+    });
+}
+
+// 端子クリック処理（hotspotのclickから呼び出す）
+function handleTerminalClick(terminalName, hotspotEl) {
+    const side = getTerminalSide(terminalName);
+    if (!side) return false; // 端子でない
+
+    const color = TERMINAL_COLORS[terminalName] || '#ffffff';
+
+    if (!wiringState.pendingTerminal) {
+        // ─── 1本目の端子を選択 ───
+        wiringState.pendingTerminal = { terminalName, side, color, el: hotspotEl };
+        hotspotEl.classList.add('wire-selected');
+        showWireStatus(`🔌 端子「${terminalName}」を選択。次に接続先の端子をクリックしてください。`, 5000);
+        redrawWires();
+    } else {
+        // ─── 2本目の端子を選択 → 結線を確定 ───
+        const pending = wiringState.pendingTerminal;
+
+        // 同じ端子を再クリック → キャンセル
+        if (pending.terminalName === terminalName) {
+            pending.el.classList.remove('wire-selected');
+            wiringState.pendingTerminal = null;
+            showWireStatus('❌ 選択を解除しました。');
+            redrawWires();
+            return true;
+        }
+
+        // 同じサイド（PS同士・OSC同士）はNG
+        if (pending.side === side) {
+            showWireStatus('⚠️ 直流電源の端子同士、またはオシロ端子同士は繋げません。');
+            return true;
+        }
+
+        // 既に同じオシロ端子に別の線が繋がっている場合は既存を削除
+        const oscTerm  = side === 'osc' ? terminalName : pending.terminalName;
+        const psTerm   = side === 'ps'  ? terminalName : pending.terminalName;
+        wiringState.connections = wiringState.connections.filter(c => c.oscTerminal !== oscTerm);
+
+        // 新しい接続を追加
+        const wireColor = TERMINAL_COLORS[psTerm] || color;
+        wiringState.connections.push({ psTerminal: psTerm, oscTerminal: oscTerm, color: wireColor });
+
+        // UI更新
+        pending.el.classList.remove('wire-selected');
+        pending.el.classList.add('wire-connected');
+        hotspotEl.classList.add('wire-connected');
+
+        wiringState.pendingTerminal = null;
+
+        // 結線に応じてオシロ信号を更新
+        updateOscilloscopeSignal();
+
+        const psLabel  = psTerm;
+        const oscLabel = oscTerm;
+        showWireStatus(`✅ ${psLabel} ↔ ${oscLabel} を接続しました。右クリックで切断できます。`);
+        redrawWires();
+
+        // 直流電源モードに自動切替（結線したとき）
+        if (scopeState.inputSource !== 'power_supply') {
+            switchInputSource('power_supply');
+        }
+    }
+    return true;
+}
+
+// 右クリックで切断
+document.addEventListener('contextmenu', function(e) {
+    const el = e.target.closest('.hotspot');
+    if (!el) return;
+    const terminalName = el.title;
+    const side = getTerminalSide(terminalName);
+    if (!side) return;
+
+    e.preventDefault();
+
+    // この端子を含む接続を全て削除
+    const before = wiringState.connections.length;
+    if (side === 'ps') {
+        wiringState.connections = wiringState.connections.filter(c => c.psTerminal !== terminalName);
+    } else {
+        wiringState.connections = wiringState.connections.filter(c => c.oscTerminal !== terminalName);
+    }
+    const after = wiringState.connections.length;
+
+    // ハイライト解除
+    el.classList.remove('wire-connected', 'wire-selected');
+
+    // 未確定の選択もキャンセル
+    if (wiringState.pendingTerminal) {
+        const pEl = document.getElementById('btn-' + wiringState.pendingTerminal.terminalName);
+        if (pEl) pEl.classList.remove('wire-selected');
+        wiringState.pendingTerminal = null;
+    }
+
+    updateOscilloscopeSignal();
+    redrawWires();
+
+    if (before !== after) {
+        showWireStatus(`🔌 接続を切断しました。`);
+    }
+});
+
+// 全結線を削除
+function clearAllWires() {
+    // ハイライトを全解除
+    document.querySelectorAll('.hotspot.wire-connected, .hotspot.wire-selected').forEach(el => {
+        el.classList.remove('wire-connected', 'wire-selected');
+    });
+    wiringState.connections = [];
+    wiringState.pendingTerminal = null;
+    updateOscilloscopeSignal();
+    redrawWires();
+    showWireStatus('🔌 すべての結線を解除しました。');
+}
+
+const _origMouseMove = document.onmousemove;
+document.addEventListener('mousemove', function() {
+    if (dragTarget) redrawWires();
+});
+
+// ウィンドウリサイズ時にも再描画
+window.addEventListener('resize', redrawWires);
+
+// アプリケーション開始
 animationLoop();
 
 // =======================================================================
@@ -1480,74 +1961,93 @@ function quitTestMode() {
 // script.js の末尾に追加
 
 // ==========================================
-// ドラッグ＆ドロップの実装
+// ドラッグ＆ドロップの実装（シンプル版）
 // ==========================================
 
-// すべてのdraggable-equipment要素を取得
-const draggables = document.querySelectorAll('.draggable-equipment');
+let dragTarget = null;
+let drag_x_pos = 0, drag_y_pos = 0, drag_x_elem = 0, drag_y_elem = 0;
 
-draggables.forEach(elm => {
-    let x_pos = 0, y_pos = 0, x_elem = 0, y_elem = 0;
+document.addEventListener('mousedown', function(e) {
+    if (e.target.tagName === 'CANVAS') return;
 
-    // 器具全体でマウスが押された時にドラッグ開始
-    elm.addEventListener('mousedown', function(e) {
-        // canvas要素上のクリックを無視（波形操作で使用するため）
-        if (e.target.tagName === 'CANVAS') return;
-        
-        // 器具を一番前面に持ってくる (z-index調整)
-        bringToFront(elm);
+    // クリックされた要素から親の.draggable-equipmentを探す
+    const target = e.target.closest('.draggable-equipment');
+    if (!target) return;
 
-        // マウスの現在位置（画面全体基準）を取得
-        x_pos = e.clientX;
-        y_pos = e.clientY;
-        
-        // 器具の左上の現在位置を取得
-        x_elem = elm.offsetLeft;
-        y_elem = elm.offsetTop;
-        
-        // マウス移動イベントと離したイベントをdocumentに登録（器具の外に出ても追従するため）
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
-        e.preventDefault(); // 予期せぬ挙動防止
-    });
+    dragTarget = target;
+    bringToFront(dragTarget);
 
-    // マウス移動中の処理
-    function onMouseMove(e) {
-        // マウスが動いた分だけ、器具の位置を更新
-        elm.style.left = (x_elem + e.clientX - x_pos) + 'px';
-        elm.style.top = (y_elem + e.clientY - y_pos) + 'px';
-    }
+    drag_x_pos  = e.clientX;
+    drag_y_pos  = e.clientY;
+    drag_x_elem = dragTarget.offsetLeft;
+    drag_y_elem = dragTarget.offsetTop;
 
-    // マウスを離した時の処理（ドラッグ終了）
-    function onMouseUp() {
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
-    }
+    e.preventDefault();
 });
 
-// 器具を一番前面に持ってくる
+document.addEventListener('mousemove', function(e) {
+    if (!dragTarget) return;
+    dragTarget.style.left = (drag_x_elem + e.clientX - drag_x_pos) + 'px';
+    dragTarget.style.top  = (drag_y_elem + e.clientY - drag_y_pos) + 'px';
+});
+
+document.addEventListener('mouseup', function() {
+    dragTarget = null;
+});
+
 function bringToFront(elm) {
-    // 他の器具のz-indexを下げ、選択されたものだけ上げる
-    draggables.forEach(d => d.style.zIndex = 10);
+    document.querySelectorAll('.draggable-equipment').forEach(d => d.style.zIndex = 10);
     elm.style.zIndex = 100;
 }
 
+function toggleSidebar() {
+    document.getElementById('equipment-sidebar').classList.toggle('open');
+}
+
+function toggleEquipment(eqId) {
+    const container = document.getElementById(eqId + '-container');
+    if (!container) return;
+    if (container.style.display === 'none') {
+        container.style.display = 'block';
+        bringToFront(container);
+    } else {
+        container.style.display = 'none';
+    }
+}
 // ==========================================
-// 実験器具メニューの制御 (前回から修正)
+// 実験器具メニューの制御
 // ==========================================
 function toggleSidebar() {
     document.getElementById('equipment-sidebar').classList.toggle('open');
 }
 
-// 器具の表示/非表示を個別に切り替える（トグル）
 function toggleEquipment(eqId) {
     const container = document.getElementById(eqId + '-container');
     if (!container) return;
-
     if (container.style.display === 'none') {
-        container.style.display = 'block'; // 表示
-        bringToFront(container); // 前面に持ってくる
+        container.style.display = 'block';
+        bringToFront(container);
     } else {
-        container.style.display = 'none'; // 非表示
+        container.style.display = 'none';
     }
+}
+
+function updatePSDisplay() {
+    const ids = ['disp-ch1-v', 'disp-ch1-a', 'disp-ch2-v', 'disp-ch2-a'];
+    const elements = ids.map(id => document.getElementById(id));
+    
+    // 要素が見つからない場合は中断
+    if (elements.some(el => !el)) return;
+
+    // 電源がOFFなら真っ暗にする
+    if (!psState.isOn) {
+        elements.forEach(el => el.textContent = "");
+        return;
+    }
+
+    // 電源ONなら数値を表示
+    document.getElementById('disp-ch1-v').textContent = psState.ch1.voltage.toFixed(2).padStart(5, '0');
+    document.getElementById('disp-ch1-a').textContent = psState.ch1.current.toFixed(3);
+    document.getElementById('disp-ch2-v').textContent = psState.ch2.voltage.toFixed(2).padStart(5, '0');
+    document.getElementById('disp-ch2-a').textContent = psState.ch2.current.toFixed(3);
 }

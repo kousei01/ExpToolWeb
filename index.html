@@ -34,6 +34,16 @@
         </div>
     </div>
 
+    <div class="panel-divider"></div>
+
+    <div class="control-group">
+        <span class="panel-label">INPUT SOURCE</span>
+        <div class="button-group">
+            <button id="btn-src-internal" class="panel-btn active" onclick="switchInputSource('internal')">内部テスト信号</button>
+            <button id="btn-src-ps" class="panel-btn" onclick="switchInputSource('power_supply')">直流電源</button>
+        </div>
+    </div>
+
     <!-- 区切り線 -->
     <div class="panel-divider"></div>
 
@@ -213,10 +223,15 @@
         </div>
     </div>
 <div id="ps-container" class="draggable-equipment" style="top: 20px; left: 600px; display: none;">
-    <div class="instrument-container">
-        <img src="power-supply.png" alt="直流電源" usemap="#map-ps">
+    <div id="model-ps" class="instrument-container">  <img src="power-supply.png" alt="直流電源" usemap="#map-ps">
+
+    <div id="disp-ch1-v" class="ps-led-display"></div>
+    <div id="disp-ch1-a" class="ps-led-display"></div>
+    <div id="disp-ch2-v" class="ps-led-display"></div>
+    <div id="disp-ch2-a" class="ps-led-display"></div>
+
         <map name="map-ps">
-            <area shape="circle" coords="107,582,32" href="#" alt="電源ボタン" />
+            <area shape="circle" coords="107,582,32" href="#" alt="ps_power" />
             <area shape="circle" coords="297,585,31" href="#" alt="ch2mai" />
             <area shape="circle" coords="392,583,29" href="#" alt="ch2pura" />
             <area shape="circle" coords="482,586,32" href="#" alt="grd" />
@@ -233,7 +248,7 @@
             <area shape="rect" coords="779,115,825,142" href="#" alt="ch1btn" />
             <area shape="rect" coords="778,173,823,199" href="#" alt="ch2btn" />
             <area shape="rect" coords="776,339,827,372" href="#" alt="output" />
-    </div>
+    </map> </div>
 </div>
     <!-- ========================================== -->
     <!-- 説明書画面 -->

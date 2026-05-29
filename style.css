@@ -372,14 +372,14 @@ body {
 
 /* 器具共通のドラッグ用コンテナ */
 .draggable-equipment {
-    position: absolute; /* 自由配置 */
-    z-index: 10;        /* Canvasより前面に */
+    position: absolute;
+    z-index: 10;
     background: white;
-    border: 2px solid #34495e;
+    /* border を削除 */
     border-radius: 8px 8px 0 0;
     box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-    overflow: hidden; /* ヘッダーからはみ出さないように */
-    cursor: default;  /* 基本は通常のマウス */
+    overflow: hidden;
+    cursor: default;
 }
 
 /* ドラッグ用の持ち手（ヘッダー） */
@@ -398,7 +398,10 @@ body {
 .draggable-equipment {
     width: fit-content !important;
     height: fit-content !important;
-    background: transparent !important; /* 背景のグレーなどを消す */
+    background: transparent !important;
+    border: none !important;        /* ← これを追加 */
+    box-shadow: none !important;    /* 影も消したい場合はこちらも */
+    border-radius: 0 !important;
 }
 
 /* 2. 中のコンテナの「画面いっぱいに広がる設定」を全て強制リセット */
@@ -418,4 +421,26 @@ body {
     display: block !important;
     margin: 0 !important;
     padding: 0 !important;
+    pointer-events: none; /* ← この1行を追加 */
 }
+
+/* デジタル数字の共通設定 */
+.ps-led-display {
+    position: absolute;
+    color: #ff3333; /* 実機に近い赤色LED */
+    font-family: 'Courier New', Courier, monospace; /* デジタル風フォント */
+    font-size: 24px; /* 文字の大きさ（画像に合わせて調整） */
+    font-weight: bold;
+    text-align: right; /* 右揃え */
+    width: 70px; /* 窓の幅（画像に合わせて調整） */
+    z-index: 20; /* ★重要：画像より手前に出す */
+    pointer-events: none; /* クリックを背後に貫通させる */
+    text-shadow: 0 0 4px #ff0000; /* ほんのり光らせる */
+}
+
+/* ★ 4つの窓それぞれの位置（仮の数値です） */
+/* ブラウザのF12ツールを使って、画像の黒い窓にピッタリ合うように微調整してください */
+#disp-ch1-v { top: 170px; left: 500px; }
+#disp-ch1-a { top: 305px; left: 500px; }
+#disp-ch2-v { top: 170px; left: 230px; }
+#disp-ch2-a { top: 305px; left: 230px; }
