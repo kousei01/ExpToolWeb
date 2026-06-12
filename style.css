@@ -444,3 +444,26 @@ body {
 #disp-ch1-a { top: 305px; left: 500px; }
 #disp-ch2-v { top: 170px; left: 230px; }
 #disp-ch2-a { top: 305px; left: 230px; }
+
+/* 発振器のディスプレイ設定 */
+#fg-display {
+    position: absolute;
+    top: 130px;  
+    left: 120px; 
+    width: 250px;
+    height: 140px;
+    background-color: #2e3b32;
+    color: #4CAF50;
+    font-family: 'Courier New', monospace;
+    padding: 10px;
+    box-sizing: border-box;
+    font-size: 14px;
+    border: 2px inset #555;
+    display: none; 
+    pointer-events: none; /* ★これを追加（クリックを貫通させる） */
+}
+
+/* 電源ON時のクラス */
+.fg-display-on {
+    display: block !important;
+}
