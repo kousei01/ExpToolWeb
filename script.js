@@ -1605,8 +1605,13 @@ function redrawWires() {
             // 発振器側の端子要素を取得
             const fgContainer = document.getElementById('model-fg');
             if (fgContainer) {
-                sourceEl = fgContainer.querySelector(`[title="${conn.fgTerminal}"]`) ||
-                           fgContainer.querySelector('#btn-' + conn.fgTerminal);
+                // 注意: #model-fg 内には <map><area title="fctnout"> が
+                // 自動生成された <div class="hotspot" title="fctnout"> より前にDOM上に存在する。
+                // [title=...] セレクタだと、サイズを持たない <area> が先にマッチしてしまい
+                // getBoundingClientRect() が (0,0,0,0) になってしまう。
+                // そのため、必ずホットスポットdiv（id="btn-xxx"）を優先的に取得する。
+                sourceEl = fgContainer.querySelector('#btn-' + conn.fgTerminal) ||
+                           fgContainer.querySelector(`.hotspot[title="${conn.fgTerminal}"]`);
             }
         } else {
             // 直流電源側の端子要素を取得
