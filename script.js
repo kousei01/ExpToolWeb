@@ -11,7 +11,15 @@ let tooltip = document.querySelector('#tooltip-agilent');
 
 // ステップ（刻み）の定義 (1, 2, 5 の法則)
 const VOLT_STEPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0];
-const TIME_STEPS = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0];
+const TIME_STEPS = [
+    0.000001, 0.000002, 0.000005,   // 1us, 2us, 5us  (AD/DA内部クロック等の高速信号用)
+    0.00001, 0.00002, 0.00005,      // 10us, 20us, 50us
+    0.0001, 0.0002, 0.0005,         // 100us, 200us, 500us
+    0.001, 0.002, 0.005,            // 1ms, 2ms, 5ms  (従来の最小値はここから)
+    0.01, 0.02, 0.05,
+    0.1, 0.2, 0.5,
+    1.0
+];
 
 // オシロスコープの状態管理
 const scopeState = {
@@ -22,7 +30,7 @@ const scopeState = {
     
     voltIndexCH1: 6,     // CH1の電圧 (初期値 1V)
     voltIndexCH2: 6,     // CH2の電圧 (初期値 1V)
-    timeIndex: 6,     // 初期値: TIME_STEPS[6] = 0.1s (=100ms)
+    timeIndex: 15,    // 初期値: TIME_STEPS[15] = 0.1s (=100ms)
     
     timeOffset: 0,    // 波形アニメーション用
     currentMenu: null, // 表示中のメニュー
@@ -1248,7 +1256,7 @@ containers.forEach(container => {
                 // 適当に見やすい値にリセットする演出
                 scopeState.voltIndexCH1 = 6; // 1.0V
                 scopeState.voltIndexCH2 = 6; // 1.0V
-                scopeState.timeIndex = 6;    // 0.1s
+                scopeState.timeIndex = 15;   // 0.1s
                 scopeState.timeOffset = 0;
                 scopeState.currentMenu = null;
                 console.log("AutoSet executed");
@@ -1594,47 +1602,73 @@ function getTerminalScreenPos(hotspotEl) {
     };
 }
 
+// 端子の「側（ps/fg/osc/adda）」と端子名から、その端子のホットスポット要素を取得する
+// 注意: 各コンテナ内には <map><area title="xxx"> が自動生成された
+// <div class="hotspot" title="xxx"> より前にDOM上に存在することがある。
+// [title=...] セレクタだと、サイズを持たない <area> が先にマッチしてしまい
+// getBoundingClientRect() が (0,0,0,0) になってしまうため、
+// 必ずホットスポットdiv（id="btn-xxx"）を優先的に取得する。
+function getTerminalElementForSide(side, termName) {
+    if (!termName) return null;
+
+    if (side === 'osc') {
+        // 現在表示されている（display: none でない）オシロスコープのコンテナを取得
+        const activeOscContainer = Array.from(document.querySelectorAll('#osc-container .instrument-container'))
+                                        .find(el => el.style.display !== 'none');
+        if (!activeOscContainer) return null;
+        return activeOscContainer.querySelector('#btn-' + termName) ||
+               activeOscContainer.querySelector(`[title="${termName}"]`) ||
+               activeOscContainer.querySelector(`[alt="${termName}"]`);
+    }
+    if (side === 'fg') {
+        const fgContainer = document.getElementById('model-fg');
+        if (!fgContainer) return null;
+        return fgContainer.querySelector('#btn-' + termName) ||
+               fgContainer.querySelector(`.hotspot[title="${termName}"]`);
+    }
+    if (side === 'adda') {
+        const addaContainer = document.getElementById('model-adda');
+        if (!addaContainer) return null;
+        return addaContainer.querySelector('#btn-' + termName) ||
+               addaContainer.querySelector(`.hotspot[title="${termName}"]`);
+    }
+    // 'ps' またはそれ以外
+    return document.getElementById('btn-' + termName);
+}
+
 // ワイヤーを全て再描画
 function redrawWires() {
     const svg = getWireSVG();
     svg.innerHTML = ''; // 一旦クリア
 
-    // 【追加】現在表示されている（display: none でない）オシロスコープのコンテナを取得
-    const activeOscContainer = Array.from(document.querySelectorAll('#osc-container .instrument-container'))
-                                    .find(el => el.style.display !== 'none');
-
     // 確定済みの接続を描画
     wiringState.connections.forEach(conn => {
-        // オシロ側の端子要素を取得
-        let oscEl = null;
-        if (activeOscContainer) {
-            oscEl = activeOscContainer.querySelector('#btn-' + conn.oscTerminal) || 
-                    activeOscContainer.querySelector(`[title="${conn.oscTerminal}"]`) ||
-                    activeOscContainer.querySelector(`[alt="${conn.oscTerminal}"]`);
-        }
+        let side1, term1, side2, term2;
 
-        let sourceEl = null;
         if (conn.type === 'fg') {
-            // 発振器側の端子要素を取得
-            const fgContainer = document.getElementById('model-fg');
-            if (fgContainer) {
-                // 注意: #model-fg 内には <map><area title="fctnout"> が
-                // 自動生成された <div class="hotspot" title="fctnout"> より前にDOM上に存在する。
-                // [title=...] セレクタだと、サイズを持たない <area> が先にマッチしてしまい
-                // getBoundingClientRect() が (0,0,0,0) になってしまう。
-                // そのため、必ずホットスポットdiv（id="btn-xxx"）を優先的に取得する。
-                sourceEl = fgContainer.querySelector('#btn-' + conn.fgTerminal) ||
-                           fgContainer.querySelector(`.hotspot[title="${conn.fgTerminal}"]`);
-            }
+            side1 = 'fg';  term1 = conn.fgTerminal;
+            side2 = 'osc'; term2 = conn.oscTerminal;
+        } else if (conn.type === 'adda') {
+            side1 = 'adda'; term1 = conn.addaTerminal || conn.psTerminal;
+            side2 = 'osc';  term2 = conn.oscTerminal;
+        } else if (conn.type === 'ps-adda') {
+            side1 = 'ps';   term1 = conn.psTerminal;
+            side2 = 'adda'; term2 = conn.addaTerminal;
+        } else if (conn.type === 'fg-adda') {
+            side1 = 'fg';   term1 = conn.fgTerminal;
+            side2 = 'adda'; term2 = conn.addaTerminal;
         } else {
-            // 直流電源側の端子要素を取得
-            sourceEl = document.getElementById('btn-' + conn.psTerminal);
+            // 'ps'（直流電源 ↔ オシロ、従来どおり）
+            side1 = 'ps';  term1 = conn.psTerminal;
+            side2 = 'osc'; term2 = conn.oscTerminal;
         }
 
-        if (!sourceEl || !oscEl) return;
+        const el1 = getTerminalElementForSide(side1, term1);
+        const el2 = getTerminalElementForSide(side2, term2);
+        if (!el1 || !el2) return;
 
-        const p1 = getTerminalScreenPos(sourceEl);
-        const p2 = getTerminalScreenPos(oscEl);
+        const p1 = getTerminalScreenPos(el1);
+        const p2 = getTerminalScreenPos(el2);
         drawWire(svg, p1, p2, conn.color, false);
     });
 
@@ -1940,6 +1974,8 @@ document.addEventListener('contextmenu', function(e) {
         wiringState.connections = wiringState.connections.filter(c => c.psTerminal !== terminalName);
     } else if (side === 'fg') {
         wiringState.connections = wiringState.connections.filter(c => c.fgTerminal !== terminalName);
+    } else if (side === 'adda') {
+        wiringState.connections = wiringState.connections.filter(c => c.addaTerminal !== terminalName);
     } else {
         wiringState.connections = wiringState.connections.filter(c => c.oscTerminal !== terminalName);
     }
@@ -1957,6 +1993,17 @@ document.addEventListener('contextmenu', function(e) {
 
     updateOscilloscopeSignal();
     updateFgWireSignal();
+
+    // TB1に結線されていた機器が切断された場合はAD/DA入力状態もリセット
+    if (typeof adDaState !== 'undefined') {
+        const tb1StillWired = wiringState.connections.some(c => c.addaTerminal === 'TB1');
+        if (!tb1StillWired) adDaState.tb1Wired = null;
+        if (document.getElementById('adda-photo-ui')) {
+            updateAdDaPanelDisplay();
+            updateAdDaTerminalSignals();
+        }
+    }
+
     redrawWires();
 
     if (before !== after) {
@@ -1974,6 +2021,15 @@ function clearAllWires() {
     wiringState.pendingTerminal = null;
     updateOscilloscopeSignal();
     updateFgWireSignal();
+
+    if (typeof adDaState !== 'undefined') {
+        adDaState.tb1Wired = null;
+        if (document.getElementById('adda-photo-ui')) {
+            updateAdDaPanelDisplay();
+            updateAdDaTerminalSignals();
+        }
+    }
+
     redrawWires();
     showWireStatus('🔌 すべての結線を解除しました。');
 }
@@ -2067,7 +2123,7 @@ const quizData = [
             scopeState.signals['CH1'].amplitude = 2.0; 
             
             scopeState.voltIndexCH1 = 6; // 1.0V/div (見やすい大きさ)
-            scopeState.timeIndex = 6;    // 0.1s (見やすい周期)
+            scopeState.timeIndex = 15;   // 0.1s (見やすい周期)
             
             updateControlPanelUI(); // パネルのボタン表示を同期
             drawWaveform();
@@ -2275,7 +2331,7 @@ let fgState = {
 // =======================================================================
 const adDaState = {
     power: true,           // 装置電源（常にON想定）
-    inputSource: 'fg',     // 入力ソース: 'fg'(発振器) or 'dc'(直流電源)
+    inputSource: 'fg',     // 入力ソース: 'fg'(発振器) or 'dc'(直流電源)　※表示上の既定値
     resolution: 8,         // 量子化ビット数 (4 or 8)
     samplingPeriodUs: 5,   // サンプリング周期 [µs] 選択肢: 5,10,50,100,200,500
     FSR: 10.24,            // フルスケールレンジ [V] (実機ITF-203Bの仕様)
@@ -2283,6 +2339,10 @@ const adDaState = {
 
     // 利用可能なサンプリング周期の選択肢 [µs]
     samplingOptions: [5, 10, 50, 100, 200, 500],
+
+    // TB1（信号入力端子）に実際に結線されている機器: 'dc' | 'fg' | null
+    // 実機同様、ここに何も結線されていない場合は入力信号が無いものとして扱う
+    tb1Wired: null,
 };
 
 // AD/DA変換装置パネルのUIを作成する関数
@@ -2768,12 +2828,17 @@ function formatAdDaFs(periodUs) {
 }
 
 function getAdDaInputVoltage() {
-    if (adDaState.inputSource === 'dc') {
+    // 実機同様、TB1に何も結線されていなければ入力電圧は無い
+    if (!adDaState.tb1Wired) return 0;
+
+    if (adDaState.tb1Wired === 'dc') {
         return (psState.isOn && psState.isOutputOn) ? psState.ch1.voltage : 0;
     }
-    if (fgState.power && fgState.outputOn) {
-        const amp = fgState.amptd / 2;
-        return fgState.offset + amp;
+    if (adDaState.tb1Wired === 'fg') {
+        if (fgState.power && fgState.outputOn) {
+            const amp = fgState.amptd / 2;
+            return fgState.offset + amp;
+        }
     }
     return 0;
 }
@@ -2822,7 +2887,7 @@ function updateAdDaPanelDisplay() {
     const sampling = document.getElementById('adda-sampling');
     if (sampling) sampling.value = String(adDaState.samplingPeriodUs);
 
-    const sourceText = adDaState.inputSource === 'fg' ? 'FG input' : 'DC input';
+    const sourceText = !adDaState.tb1Wired ? 'unconnected' : (adDaState.tb1Wired === 'fg' ? 'FG input' : 'DC input');
     const modeText = adDaState.mode === 'unipolar' ? 'unipolar' : 'bipolar';
     setText('adda-switch-readout',
         `SW1 ${sourceText} / SW4 ${adDaState.resolution}bit, ${adDaState.samplingPeriodUs}us / SW5,SW7 ${modeText} / SW6,SW8 OFF`
@@ -2885,6 +2950,11 @@ function cycleAdDaSampling(direction = 1) {
 
 function handleAddaSwitch(swId) {
     if (swId === 'SW1') {
+        if (adDaState.tb1Wired) {
+            const deviceName = adDaState.tb1Wired === 'dc' ? '直流電源' : '発振器';
+            showWireStatus(`SW1: TB1には${deviceName}が結線されています。切り替えるには先に結線を外してください。`);
+            return;
+        }
         onAdDaSourceChange(adDaState.inputSource === 'fg' ? 'dc' : 'fg');
     } else if (swId === 'SW4') {
         onAdDaBitsChange(adDaState.resolution === 8 ? 4 : 8);
@@ -2925,6 +2995,8 @@ updatePSDisplay = function() {
 
 const ADDA_TERMINALS = ['TB1','TB2','TB3','TB4','TB5','TB6','TP1','TP2','TP3','TP5','TP6','TP7','TP8','TP9','TP10','TP11','TP12'];
 Object.assign(TERMINAL_COLORS, {
+    TB1: '#27ae60', // 緑（AD/DA信号入力 +）
+    TB2: '#7f8c8d', // グレー（AD/DA信号入力 −/GND）
     TB5: '#e74c3c',
     TB6: '#222222',
     TP1: '#3498db',
@@ -2994,12 +3066,87 @@ handleTerminalClick = function(terminalName, hotspotEl) {
         return true;
     }
 
+    // 直流電源 ↔ AD/DA（TB1/TB2への入力結線。図A: AD変換器の変換過程の観察 用）
+    if ((pending.side === 'ps' && side === 'adda') || (pending.side === 'adda' && side === 'ps')) {
+        const addaTerm = side === 'adda' ? terminalName : pending.terminalName;
+        const psTerm   = side === 'ps'   ? terminalName : pending.terminalName;
+
+        if (addaTerm !== 'TB1' && addaTerm !== 'TB2') {
+            showWireStatus('⚠️ 直流電源はAD/DA変換機のTB1(+)/TB2(-)端子に接続してください。');
+            return true;
+        }
+
+        // 同じAD/DA端子に既に結線があれば解除してから繋ぎ直す
+        wiringState.connections = wiringState.connections.filter(c => c.addaTerminal !== addaTerm);
+        wiringState.connections.push({
+            psTerminal: psTerm,
+            addaTerminal: addaTerm,
+            color: TERMINAL_COLORS[psTerm] || color,
+            type: 'ps-adda'
+        });
+
+        pending.el.classList.remove('wire-selected');
+        pending.el.classList.add('wire-connected');
+        hotspotEl.classList.add('wire-connected');
+        wiringState.pendingTerminal = null;
+
+        if (addaTerm === 'TB1') {
+            adDaState.tb1Wired = 'dc';
+            adDaState.inputSource = 'dc';
+        }
+
+        updateAdDaPanelDisplay();
+        updateAdDaTerminalSignals();
+        showWireStatus(`✅ 直流電源(${psTerm}) → AD/DA(${addaTerm}) を接続しました。右クリックで切断できます。`);
+        redrawWires();
+        return true;
+    }
+
+    // 発振器 ↔ AD/DA（TB1/TB2への入力結線。図B: AD/DA変換後の波形の観察 用）
+    if ((pending.side === 'fg' && side === 'adda') || (pending.side === 'adda' && side === 'fg')) {
+        const addaTerm = side === 'adda' ? terminalName : pending.terminalName;
+        const fgTerm   = side === 'fg'   ? terminalName : pending.terminalName;
+
+        if (addaTerm !== 'TB1' && addaTerm !== 'TB2') {
+            showWireStatus('⚠️ 発振器はAD/DA変換機のTB1(+)/TB2(-)端子に接続してください。');
+            return true;
+        }
+
+        wiringState.connections = wiringState.connections.filter(c => c.addaTerminal !== addaTerm);
+        wiringState.connections.push({
+            fgTerminal: fgTerm,
+            addaTerminal: addaTerm,
+            color: TERMINAL_COLORS[fgTerm] || color,
+            type: 'fg-adda'
+        });
+
+        pending.el.classList.remove('wire-selected');
+        pending.el.classList.add('wire-connected');
+        hotspotEl.classList.add('wire-connected');
+        wiringState.pendingTerminal = null;
+
+        if (addaTerm === 'TB1') {
+            adDaState.tb1Wired = 'fg';
+            adDaState.inputSource = 'fg';
+        }
+
+        updateAdDaPanelDisplay();
+        updateAdDaTerminalSignals();
+        showWireStatus(`✅ 発振器(${fgTerm}) → AD/DA(${addaTerm}) を接続しました。右クリックで切断できます。`);
+        redrawWires();
+        return true;
+    }
+
     showWireStatus('このAD/DA端子の組み合わせは未対応です。');
     return true;
 };
 
 function makeAdDaInputSignal() {
-    if (adDaState.inputSource === 'dc') {
+    if (!adDaState.tb1Wired) {
+        // TB1未結線: 実機同様、入力信号なし
+        return { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg' };
+    }
+    if (adDaState.tb1Wired === 'dc') {
         return { type: 'flat', amplitude: 0, frequency: 1, offset: getAdDaInputVoltage(), source: 'fg' };
     }
     const waveMap = { SINE: 'sine', SQUARE: 'square', RAMP: 'tri' };
@@ -3017,7 +3164,10 @@ function makeAdDaTerminalSignal(terminalName) {
     const fsHz = 1000000 / adDaState.samplingPeriodUs;
 
     if (terminalName === 'TB5') {
-        if (adDaState.inputSource === 'dc') {
+        if (!adDaState.tb1Wired) {
+            return { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg' };
+        }
+        if (adDaState.tb1Wired === 'dc') {
             return { type: 'flat', amplitude: 0, frequency: 1, offset: getAdDaOutputFromCode(getAdDaCode(getAdDaInputVoltage())), source: 'fg' };
         }
         return {
@@ -3040,13 +3190,45 @@ function makeAdDaTerminalSignal(terminalName) {
     return { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg' };
 }
 
+// AD/DA端子ごとの「実際に表示すべき周波数」を返す（時間軸の自動調整に使用）
+// null を返す場合はその端子の表示周波数からは自動調整しない（DC等）
+function getAdDaTerminalDisplayFrequency(terminalName) {
+    const fsHz = 1000000 / adDaState.samplingPeriodUs;
+
+    if (terminalName === 'TP3') return fsHz;
+    if (terminalName === 'TP5' || terminalName === 'TP8') {
+        return Math.max(1, fsHz / Math.max(1, adDaState.resolution));
+    }
+    if (terminalName === 'TB5' || terminalName === 'TP1') {
+        // 発振器が結線されていて出力ONの時だけ、その周波数に合わせる
+        if (adDaState.tb1Wired === 'fg' && fgState.power && fgState.outputOn && fgState.freq) {
+            return fgState.freq;
+        }
+        return null; // DC入力時や未結線時は自動調整しない
+    }
+    return null;
+}
+
 function updateAdDaTerminalSignals() {
+    let maxDisplayFreq = 0;
+
     wiringState.connections
         .filter(c => c.type === 'adda')
         .forEach(conn => {
             const channel = conn.oscTerminal === 'Ch1' ? 'CH1' : 'CH2';
-            scopeState.signals[channel] = makeAdDaTerminalSignal(conn.addaTerminal || conn.psTerminal);
+            const termName = conn.addaTerminal || conn.psTerminal;
+            scopeState.signals[channel] = makeAdDaTerminalSignal(termName);
+
+            const freq = getAdDaTerminalDisplayFrequency(termName);
+            if (freq && freq > maxDisplayFreq) maxDisplayFreq = freq;
         });
+
+    // 接続されているAD/DA端子の中で最も速い信号に合わせて時間軸を自動調整
+    // （TP3/TP5/TP8などはkHzオーダーのため、手動のTime/Divでは追いつかないことがある）
+    if (maxDisplayFreq > 0) {
+        autoAdjustTimeAxis(maxDisplayFreq);
+    }
+
     if (scopeState.isOn) drawWaveform();
 }
 
@@ -3060,9 +3242,17 @@ document.addEventListener('contextmenu', function(e) {
     const el = e.target.closest('.hotspot');
     if (!el || !ADDA_TERMINALS.includes(el.title)) return;
     e.preventDefault();
-    wiringState.connections = wiringState.connections.filter(c => c.addaTerminal !== el.title && c.psTerminal !== el.title);
+    wiringState.connections = wiringState.connections.filter(c =>
+        c.addaTerminal !== el.title && c.psTerminal !== el.title && c.fgTerminal !== el.title
+    );
     el.classList.remove('wire-connected', 'wire-selected');
     wiringState.pendingTerminal = null;
+
+    if (el.title === 'TB1') {
+        adDaState.tb1Wired = null;
+    }
+
+    updateAdDaPanelDisplay();
     updateAdDaTerminalSignals();
     redrawWires();
 }, true);
