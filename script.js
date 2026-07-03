@@ -1456,7 +1456,8 @@ containers.forEach(container => {
     // 通常は map.name が "map-xxx" で getElementById("model-xxx") を探すが
     // FGは "fg-map" という名前なので明示的にマッピングする
     const mapNameToContainerId = {
-        'fg-map': 'model-fg'
+        'fg-map': 'model-fg',
+        'adda-map': 'model-adda'
         // 通常のマップは replace('map-', 'model-') で自動処理される
     };
 
@@ -1470,6 +1471,7 @@ containers.forEach(container => {
 
         // FGマップかどうかを判定（クリック処理の振り分けに使う）
         const isFgMap = (map.name === 'fg-map');
+        const isAddaMap = (map.name === 'adda-map');
 
         const areas = map.querySelectorAll('area');
         areas.forEach((area) => {
@@ -1501,9 +1503,20 @@ containers.forEach(container => {
                     }
                 });
             }
+            if (isAddaMap) {
+                div.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    if (area.classList.contains('terminal-spot')) {
+                        handleTerminalClick(title, div);
+                    } else {
+                        handleAddaSwitch(title);
+                    }
+                });
+            }
 
             // 実装状況の色分け
-            const isActive = activeFeatures.includes(title) || 
+            const isActive = isAddaMap ||
+                             activeFeatures.includes(title) || 
                              (typeof menuDataHantek !== 'undefined' && menuDataHantek[title]) ||
                              (typeof menuDataAgilent !== 'undefined' && menuDataAgilent[title]);
 
@@ -1984,12 +1997,9 @@ window.addEventListener('load', function() {
     const equipList = document.querySelector('.equipment-list');
     if (equipList) {
         const adDaItem = document.createElement('li');
-        adDaItem.innerHTML = '⚙️ AD/DA変換装置';
+        adDaItem.innerHTML = 'AD/DA変換機';
         adDaItem.onclick = function() {
-            const panel = document.getElementById('adda-panel');
-            if (panel) {
-                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-            }
+            toggleEquipment('adda');
         };
         equipList.appendChild(adDaItem);
     }
@@ -2710,3 +2720,349 @@ function getOscilloscopeVoltage(ch, signalTime, pixelX) {
     // 従来の内部テスト信号
     return getSignalVoltage(ch, signalTime);
 }
+
+// =======================================================================
+//  AD/DA converter photo controls (ITF-203B)
+//  The old floating control panel is intentionally replaced by overlays on
+//  the real equipment image.
+// =======================================================================
+function createAdDaPanel() {
+    const oldPanel = document.getElementById('adda-panel');
+    if (oldPanel) oldPanel.remove();
+
+    const model = document.getElementById('model-adda');
+    if (!model || document.getElementById('adda-photo-ui')) {
+        updateAdDaPanelDisplay();
+        return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.id = 'adda-photo-ui';
+    overlay.innerHTML = `
+        <div id="adda-sampling-hotspot" class="adda-invisible-hotspot" title="サンプリング周期切換"></div>
+    `;
+
+    model.appendChild(overlay);
+
+    const samplingHotspot = document.getElementById('adda-sampling-hotspot');
+    if (samplingHotspot) {
+        samplingHotspot.addEventListener('click', e => {
+            e.stopPropagation();
+            cycleAdDaSampling();
+        });
+        samplingHotspot.addEventListener('wheel', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            cycleAdDaSampling(e.deltaY < 0 ? -1 : 1);
+        });
+    }
+
+    updateAdDaPanelDisplay();
+}
+
+function formatAdDaFs(periodUs) {
+    const fsHz = 1000000 / periodUs;
+    if (fsHz >= 100000) return (fsHz / 1000).toFixed(0) + ' kHz';
+    if (fsHz >= 1000) return (fsHz / 1000).toFixed(fsHz % 1000 === 0 ? 0 : 1) + ' kHz';
+    return fsHz.toFixed(0) + ' Hz';
+}
+
+function getAdDaInputVoltage() {
+    if (adDaState.inputSource === 'dc') {
+        return (psState.isOn && psState.isOutputOn) ? psState.ch1.voltage : 0;
+    }
+    if (fgState.power && fgState.outputOn) {
+        const amp = fgState.amptd / 2;
+        return fgState.offset + amp;
+    }
+    return 0;
+}
+
+function getAdDaCode(voltage) {
+    const levels = Math.pow(2, adDaState.resolution);
+    const q = adDaState.FSR / levels;
+    let normalized;
+
+    if (adDaState.mode === 'unipolar') {
+        normalized = Math.max(0, Math.min(adDaState.FSR - q, voltage));
+    } else {
+        const half = adDaState.FSR / 2;
+        normalized = Math.max(-half, Math.min(half - q, voltage)) + half;
+    }
+
+    return Math.max(0, Math.min(levels - 1, Math.floor(normalized / q)));
+}
+
+function getAdDaOutputFromCode(code) {
+    const q = adDaState.FSR / Math.pow(2, adDaState.resolution);
+    const value = code * q;
+    return adDaState.mode === 'unipolar' ? value : value - (adDaState.FSR / 2);
+}
+
+function updateAdDaPanelDisplay() {
+    const fsText = formatAdDaFs(adDaState.samplingPeriodUs);
+    const q = adDaState.FSR / Math.pow(2, adDaState.resolution);
+    const vin = getAdDaInputVoltage();
+    const code = getAdDaCode(vin);
+    const vout = getAdDaOutputFromCode(code);
+    const codeText = code.toString(2).padStart(adDaState.resolution, '0');
+
+    const setText = (id, text) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+    };
+
+    setText('adda-fs', fsText);
+    setText('adda-ts', adDaState.samplingPeriodUs + ' us');
+    setText('adda-step', q.toFixed(4) + ' V');
+    setText('adda-input-voltage', vin.toFixed(2) + ' V');
+    setText('adda-output-voltage', vout.toFixed(2) + ' V');
+    setText('adda-code', codeText);
+
+    const sampling = document.getElementById('adda-sampling');
+    if (sampling) sampling.value = String(adDaState.samplingPeriodUs);
+
+    const sourceText = adDaState.inputSource === 'fg' ? 'FG input' : 'DC input';
+    const modeText = adDaState.mode === 'unipolar' ? 'unipolar' : 'bipolar';
+    setText('adda-switch-readout',
+        `SW1 ${sourceText} / SW4 ${adDaState.resolution}bit, ${adDaState.samplingPeriodUs}us / SW5,SW7 ${modeText} / SW6,SW8 OFF`
+    );
+
+    document.querySelectorAll('#adda-led-bank span').forEach((led, i) => {
+        const firstActive = 8 - adDaState.resolution;
+        const bit = i >= firstActive ? codeText[i - firstActive] : '0';
+        led.classList.toggle('on', bit === '1');
+        led.classList.toggle('disabled', i < firstActive);
+        led.title = i < firstActive ? 'unused in 4bit mode' : `D${7 - i}: ${bit}`;
+    });
+
+    document.querySelectorAll('[data-adda-source]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.addaSource === adDaState.inputSource);
+    });
+    document.querySelectorAll('[data-adda-bits]').forEach(btn => {
+        btn.classList.toggle('active', parseInt(btn.dataset.addaBits, 10) === adDaState.resolution);
+    });
+    document.querySelectorAll('[data-adda-mode]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.addaMode === adDaState.mode);
+    });
+
+    updateFgToOscilloscope();
+    updateOscilloscopeSignal();
+}
+
+function onAdDaSamplingChange(val) {
+    adDaState.samplingPeriodUs = parseInt(val, 10);
+    updateAdDaPanelDisplay();
+    showWireStatus(`AD/DA sampling period: ${adDaState.samplingPeriodUs} us`);
+}
+
+function onAdDaBitsChange(bits) {
+    adDaState.resolution = bits === 4 ? 4 : 8;
+    updateAdDaPanelDisplay();
+    showWireStatus(`AD resolution: ${adDaState.resolution} bit`);
+}
+
+function onAdDaSourceChange(src) {
+    adDaState.inputSource = src === 'dc' ? 'dc' : 'fg';
+    switchInputSource(adDaState.inputSource === 'dc' ? 'power_supply' : 'fg');
+    updateAdDaPanelDisplay();
+}
+
+function onAdDaModeChange(mode) {
+    adDaState.mode = mode === 'unipolar' ? 'unipolar' : 'bipolar';
+    updateAdDaPanelDisplay();
+    showWireStatus(`AD/DA mode: ${adDaState.mode}`);
+}
+
+function cycleAdDaSampling(direction = 1) {
+    const options = adDaState.samplingOptions || [5, 10, 50, 100, 200, 500];
+    const current = options.indexOf(adDaState.samplingPeriodUs);
+    const next = (current + direction + options.length) % options.length;
+    adDaState.samplingPeriodUs = options[next];
+    updateAdDaPanelDisplay();
+    showWireStatus(`Ts = ${adDaState.samplingPeriodUs} us`);
+}
+
+function handleAddaSwitch(swId) {
+    if (swId === 'SW1') {
+        onAdDaSourceChange(adDaState.inputSource === 'fg' ? 'dc' : 'fg');
+    } else if (swId === 'SW4') {
+        onAdDaBitsChange(adDaState.resolution === 8 ? 4 : 8);
+    } else if (swId === 'SW5' || swId === 'SW7') {
+        onAdDaModeChange(adDaState.mode === 'bipolar' ? 'unipolar' : 'bipolar');
+    } else if (swId === 'SW6' || swId === 'SW8') {
+        showWireStatus(`${swId}: OFF (filter bypass for this experiment)`);
+    }
+}
+
+function getAdDaVoltage(rawVolt, adda) {
+    const resolution = adda.resolution || adDaState.resolution;
+    const FSR = adda.FSR || adDaState.FSR;
+    const mode = adda.mode || adDaState.mode;
+    const q = FSR / Math.pow(2, resolution);
+
+    if (mode === 'unipolar') {
+        const clipped = Math.max(0, Math.min(FSR - q, rawVolt));
+        return Math.round(clipped / q) * q;
+    }
+
+    const halfFSR = FSR / 2;
+    const clipped = Math.max(-halfFSR, Math.min(halfFSR - q, rawVolt));
+    return Math.round(clipped / q) * q;
+}
+
+const originalUpdateFgDisplayForAdDa = updateFgDisplay;
+updateFgDisplay = function() {
+    originalUpdateFgDisplayForAdDa();
+    if (document.getElementById('adda-photo-ui')) updateAdDaPanelDisplay();
+};
+
+const originalUpdatePSDisplayForAdDa = updatePSDisplay;
+updatePSDisplay = function() {
+    originalUpdatePSDisplayForAdDa();
+    if (document.getElementById('adda-photo-ui')) updateAdDaPanelDisplay();
+};
+
+const ADDA_TERMINALS = ['TB1','TB2','TB3','TB4','TB5','TB6','TP1','TP2','TP3','TP5','TP6','TP7','TP8','TP9','TP10','TP11','TP12'];
+Object.assign(TERMINAL_COLORS, {
+    TB5: '#e74c3c',
+    TB6: '#222222',
+    TP1: '#3498db',
+    TP2: '#222222',
+    TP3: '#f1c40f',
+    TP5: '#9b59b6',
+    TP8: '#1abc9c'
+});
+
+const originalGetTerminalSideForAdDa = getTerminalSide;
+getTerminalSide = function(name) {
+    if (ADDA_TERMINALS.includes(name)) return 'adda';
+    return originalGetTerminalSideForAdDa(name);
+};
+
+const originalHandleTerminalClickForAdDa = handleTerminalClick;
+handleTerminalClick = function(terminalName, hotspotEl) {
+    const side = getTerminalSide(terminalName);
+    const pending = wiringState.pendingTerminal;
+    const usesAdDa = side === 'adda' || (pending && pending.side === 'adda');
+    if (!usesAdDa) return originalHandleTerminalClickForAdDa(terminalName, hotspotEl);
+    if (!side) return false;
+
+    const color = TERMINAL_COLORS[terminalName] || '#ffffff';
+    if (!pending) {
+        wiringState.pendingTerminal = { terminalName, side, color, el: hotspotEl };
+        hotspotEl.classList.add('wire-selected');
+        showWireStatus(`端子「${terminalName}」を選択。接続先をクリックしてください。`, 5000);
+        redrawWires();
+        return true;
+    }
+
+    if (pending.terminalName === terminalName) {
+        pending.el.classList.remove('wire-selected');
+        wiringState.pendingTerminal = null;
+        showWireStatus('選択を解除しました。');
+        redrawWires();
+        return true;
+    }
+
+    if (pending.side === side) {
+        showWireStatus('同じ機器側の端子同士は接続できません。');
+        return true;
+    }
+
+    if ((pending.side === 'adda' && side === 'osc') || (pending.side === 'osc' && side === 'adda')) {
+        const oscTerm = side === 'osc' ? terminalName : pending.terminalName;
+        const addaTerm = side === 'adda' ? terminalName : pending.terminalName;
+        wiringState.connections = wiringState.connections.filter(c => c.oscTerminal !== oscTerm);
+        wiringState.connections.push({
+            psTerminal: addaTerm,
+            addaTerminal: addaTerm,
+            oscTerminal: oscTerm,
+            color: TERMINAL_COLORS[addaTerm] || color,
+            type: 'adda'
+        });
+
+        pending.el.classList.remove('wire-selected');
+        pending.el.classList.add('wire-connected');
+        hotspotEl.classList.add('wire-connected');
+        wiringState.pendingTerminal = null;
+
+        scopeState.inputSource = 'fg';
+        updateAdDaTerminalSignals();
+        showWireStatus(`AD/DA(${addaTerm}) -> オシロ(${oscTerm}) を接続しました。`);
+        redrawWires();
+        return true;
+    }
+
+    showWireStatus('このAD/DA端子の組み合わせは未対応です。');
+    return true;
+};
+
+function makeAdDaInputSignal() {
+    if (adDaState.inputSource === 'dc') {
+        return { type: 'flat', amplitude: 0, frequency: 1, offset: getAdDaInputVoltage(), source: 'fg' };
+    }
+    const waveMap = { SINE: 'sine', SQUARE: 'square', RAMP: 'tri' };
+    return {
+        type: waveMap[fgState.waveform] || 'sine',
+        amplitude: fgState.outputOn ? fgState.amptd / 2 : 0,
+        frequency: fgState.freq,
+        offset: fgState.outputOn ? fgState.offset : 0,
+        source: 'fg'
+    };
+}
+
+function makeAdDaTerminalSignal(terminalName) {
+    const input = makeAdDaInputSignal();
+    const fsHz = 1000000 / adDaState.samplingPeriodUs;
+
+    if (terminalName === 'TB5') {
+        if (adDaState.inputSource === 'dc') {
+            return { type: 'flat', amplitude: 0, frequency: 1, offset: getAdDaOutputFromCode(getAdDaCode(getAdDaInputVoltage())), source: 'fg' };
+        }
+        return {
+            ...input,
+            source: 'adda',
+            adda: {
+                resolution: adDaState.resolution,
+                samplingPeriodUs: adDaState.samplingPeriodUs,
+                FSR: adDaState.FSR,
+                mode: adDaState.mode
+            }
+        };
+    }
+
+    if (terminalName === 'TP1') return input;
+    if (terminalName === 'TP3') return { type: 'square', amplitude: 2.5, frequency: fsHz, offset: 2.5, source: 'fg' };
+    if (terminalName === 'TP5' || terminalName === 'TP8') {
+        return { type: 'square', amplitude: 2.5, frequency: Math.max(1, fsHz / Math.max(1, adDaState.resolution)), offset: 2.5, source: 'fg' };
+    }
+    return { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg' };
+}
+
+function updateAdDaTerminalSignals() {
+    wiringState.connections
+        .filter(c => c.type === 'adda')
+        .forEach(conn => {
+            const channel = conn.oscTerminal === 'Ch1' ? 'CH1' : 'CH2';
+            scopeState.signals[channel] = makeAdDaTerminalSignal(conn.addaTerminal || conn.psTerminal);
+        });
+    if (scopeState.isOn) drawWaveform();
+}
+
+const originalUpdateOscilloscopeSignalForAdDa = updateOscilloscopeSignal;
+updateOscilloscopeSignal = function() {
+    originalUpdateOscilloscopeSignalForAdDa();
+    updateAdDaTerminalSignals();
+};
+
+document.addEventListener('contextmenu', function(e) {
+    const el = e.target.closest('.hotspot');
+    if (!el || !ADDA_TERMINALS.includes(el.title)) return;
+    e.preventDefault();
+    wiringState.connections = wiringState.connections.filter(c => c.addaTerminal !== el.title && c.psTerminal !== el.title);
+    el.classList.remove('wire-connected', 'wire-selected');
+    wiringState.pendingTerminal = null;
+    updateAdDaTerminalSignals();
+    redrawWires();
+}, true);

@@ -470,3 +470,27 @@ body {
 .fg-display-on {
     display: block !important;
 }
+
+/* AD/DA converter photo UI */
+#adda-photo-ui {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.adda-invisible-hotspot {
+    position: absolute;
+    left: 580px;
+    top: 575px;
+    width: 118px;
+    height: 58px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+/* AD/DA変換機のクリック範囲を青色にする */
+#model-adda .hotspot {
+    background-color: rgba(0, 0, 255, 0.3);
+}
