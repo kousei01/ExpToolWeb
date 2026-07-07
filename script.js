@@ -630,12 +630,26 @@ function drawMenuAgilent(data) {
 // 指定したチャンネル・時刻における電圧値を取得する関数
 function getSignalVoltage(ch, t) {
     const signal = scopeState.signals[ch];
+    if (!signal) return 0;
+
     const freq = signal.frequency;
     const amp = signal.amplitude;
-    
-    // 基本の位相 (2πft)
-    const phase = 2 * Math.PI * freq * t;
-    
+    let targetTime = t;
+
+    // --- ① 標本化 (Sampling & Hold) の再現 ---
+    // もし信号がAD/DA基板の出力（例: TP5 や DA_OUT など）として設定されている場合
+    // ※ signalオブジェクトに ad_da.mode フラグ等が立っているかで判定します
+    let isAdDaOutput = (scopeState.ad_da && scopeState.ad_da.mode && ch === 'CH2'); 
+    // （結線ロジック側で signal.isAdDaOutput = true; のようにフラグ付けしておくとより確実です）
+
+    if (isAdDaOutput) {
+        // サンプリング周期(µs)を秒(s)に変換して、現在の時間 t を丸める
+        const Ts = scopeState.ad_da.samplingPeriod * 1e-6; 
+        targetTime = Math.floor(t / Ts) * Ts; 
+    }
+
+    // --- ② 元のアナログ波形の計算 (targetTime を使用) ---
+    const phase = 2 * Math.PI * freq * targetTime;
     let val = 0;
     if (signal.type === 'sine') {
         val = Math.sin(phase);
@@ -645,8 +659,21 @@ function getSignalVoltage(ch, t) {
         val = (2 / Math.PI) * Math.asin(Math.sin(phase));
     }
     
-    // 実際の電圧 = 値(-1~1) * 振幅 + DCオフセット(今回は0)
-    return val * amp;
+    let voltage = val * amp;
+
+    // --- ③ 量子化 (Quantization) の再現 ---
+    if (isAdDaOutput) {
+        const res = scopeState.ad_da.resolution; // 4 or 8
+        const levels = Math.pow(2, res); // 4bit=16段階, 8bit=256段階
+        
+        // 波形の振幅の2倍をフルスケールレンジとして、1段階あたりの電圧(q)を計算
+        const q = (amp * 2) / levels; 
+        
+        // 電圧を離散化（階段状に丸める）
+        voltage = Math.round((voltage + amp) / q) * q - amp;
+    }
+
+    return voltage;
 }
 
 // トリガーポイント（時間オフセット）を計算する関数
@@ -3256,3 +3283,98 @@ document.addEventListener('contextmenu', function(e) {
     updateAdDaTerminalSignals();
     redrawWires();
 }, true);
+
+
+// =======================================================================
+// AD/DA基板 スイッチ操作ロジック
+// (HTMLの <area onclick="clickAddaSwitch('SW5')"> 等から呼び出される想定)
+// =======================================================================
+function clickAddaSwitch(switchId) {
+    if (!scopeState.ad_da) return;
+
+    if (switchId === 'SW5') {
+        // PDFの実験: 4bit と 8bit の切り替え
+        if (scopeState.ad_da.resolution === 8) {
+            scopeState.ad_da.resolution = 4;
+            console.log("量子化ビット数を 4bit に変更しました");
+        } else {
+            scopeState.ad_da.resolution = 8;
+            console.log("量子化ビット数を 8bit に変更しました");
+        }
+    } 
+    else if (switchId === 'SW_CLOCK') { // サンプリングクロック切替スイッチの名前は適宜変更してください
+        // PDFの実験: サンプリング周期 (Ts) を段階的に切り替える
+        const periods = [5, 50, 200, 500]; // 単位: µs
+        let currentIndex = periods.indexOf(scopeState.ad_da.samplingPeriod);
+        let nextIndex = (currentIndex + 1) % periods.length;
+        
+        scopeState.ad_da.samplingPeriod = periods[nextIndex];
+        console.log(`サンプリング周期を ${periods[nextIndex]}µs に変更しました`);
+    }
+
+    // パラメータが変更されたため、波形を描画し直す
+    // ※ 現在の構成に合わせて、Agilent描画等を呼び出してください
+    if (scopeState.isOn) {
+        if (typeof drawAgilent === 'function') drawAgilent();
+        // または drawWaveform(); 
+    }
+}
+
+
+// =======================================================================
+// 機器の個別サイズ調整ロジック (プルダウン・スライダー連動 修正版)
+// =======================================================================
+
+// 各機器の現在の倍率を保存しておくオブジェクト (IDを修正)
+const instrumentScales = {
+    'model-agilent': 1.0,
+    'model-hantek': 1.0,
+    'model-adda': 1.0,
+    'model-fg': 1.0,
+    'model-ps': 1.0
+};
+
+function updateSizeSliderDisplay() {
+    const targetId = document.getElementById('size-target-select').value;
+    const currentScale = instrumentScales[targetId] || 1.0;
+    
+    document.getElementById('size-slider').value = currentScale;
+    document.getElementById('val-size-display').innerText = currentScale.toFixed(1) + 'x';
+}
+
+function applySizeChange() {
+    const targetId = document.getElementById('size-target-select').value;
+    const scaleValue = parseFloat(document.getElementById('size-slider').value);
+    
+    instrumentScales[targetId] = scaleValue;
+    document.getElementById('val-size-display').innerText = scaleValue.toFixed(1) + 'x';
+    
+    const container = document.getElementById(targetId);
+    if (!container) {
+        console.error("サイズ変更対象のIDが見つかりません: " + targetId);
+        return;
+    }
+
+    // 1. 変形適用
+    container.style.transform = `scale(${scaleValue})`;
+    container.style.transformOrigin = 'top left';
+
+    // 2. ドラッグ移動と競合しないようマージンをリセット
+    container.style.marginLeft = '0px';
+    container.style.marginTop = '0px';
+    container.style.marginBottom = '0px';
+    container.style.marginRight = '0px';
+
+    // 3. 親要素（ドラッグ判定枠）のサイズを追従させる
+    const img = container.querySelector('img');
+    if (img) {
+        const scaledWidth = img.naturalWidth * scaleValue;
+        const scaledHeight = img.naturalHeight * scaleValue;
+        
+        const wrapper = container.closest('.draggable-equipment');
+        if (wrapper) {
+            wrapper.style.setProperty('width', `${scaledWidth}px`, 'important');
+            wrapper.style.setProperty('height', `${scaledHeight}px`, 'important');
+        }
+    }
+}

@@ -62,22 +62,24 @@
     <!-- 区切り線 -->
     <div class="panel-divider"></div>
 
-    <!-- 3. 信号操作グループ (新規追加) -->
     <div class="control-group">
-        <span class="panel-label">SIGNAL GEN</span>
-        
-        <!-- 波形切り替え -->
-        <div class="button-group" style="margin-bottom: 4px;">
-            <button class="panel-btn active" id="btn-wave-sine" onclick="setWaveType('sine')">Sine</button>
-            <button class="panel-btn" id="btn-wave-square" onclick="setWaveType('square')">Square</button>
-            <button class="panel-btn" id="btn-wave-tri" onclick="setWaveType('tri')">Tri</button>
-        </div>
-
-        <!-- 振幅調整 -->
-        <div class="button-group">
-            <span style="font-size:10px; color:#aaa; margin-right:5px;">AMP:</span>
-            <button class="panel-btn icon-btn" onclick="changeSignalAmplitude(-0.5)">－</button>
-            <button class="panel-btn icon-btn" onclick="changeSignalAmplitude(0.5)">＋</button>
+        <span class="panel-label">SIZE ADJUST</span>
+        <div style="display: flex; align-items: center; gap: 10px; margin-left: 10px;">
+            
+            <select id="size-target-select" class="panel-btn" 
+                    style="padding: 5px 10px; background: #34495e; color: white; border: none; border-radius: 4px; cursor: pointer;" 
+                    onchange="updateSizeSliderDisplay()">
+                <option value="model-agilent">オシロスコープ (Agilent)</option>
+                <option value="model-hantek">オシロスコープ (Hantek)</option>
+                <option value="model-adda">AD/DA 変換基板</option>
+                <option value="model-fg">信号発生器</option>
+                <option value="model-ps">直流電源</option>
+            </select>
+            
+            <input type="range" id="size-slider" min="0.5" max="2.0" step="0.1" value="1.0" 
+                   oninput="applySizeChange()">
+            <span id="val-size-display" style="color: #333; font-size: 14px; min-width: 40px; text-align: right;">1.0x</span>
+            
         </div>
     </div>
 
