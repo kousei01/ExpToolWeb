@@ -9,6 +9,13 @@ let canvas = document.querySelector('#canvas-agilent');
 let ctx = canvas.getContext('2d');
 let tooltip = document.querySelector('#tooltip-agilent');
 
+// モデルごとに使用可能なチャンネル一覧
+// Hantekは2ch機、Agilent(MSOX2004A)はCh3端子があるため3ch分表示に対応
+const MODEL_CHANNELS = {
+    hantek: ['CH1', 'CH2'],
+    agilent: ['CH1', 'CH2', 'CH3']
+};
+
 // ステップ（刻み）の定義 (1, 2, 5 の法則)
 const VOLT_STEPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0];
 const TIME_STEPS = [
@@ -30,6 +37,7 @@ const scopeState = {
     
     voltIndexCH1: 6,     // CH1の電圧 (初期値 1V)
     voltIndexCH2: 6,     // CH2の電圧 (初期値 1V)
+    voltIndexCH3: 6,     // CH3の電圧 (初期値 1V) ※AD変換過程観察(TP5)用
     timeIndex: 15,    // 初期値: TIME_STEPS[15] = 0.1s (=100ms)
     
     timeOffset: 0,    // 波形アニメーション用
@@ -38,6 +46,7 @@ const scopeState = {
 
     positionCH1: 0, // CH1の上下位置オフセット（初期値0）
     positionCH2: 0, // CH2の上下位置オフセット（初期値0）
+    positionCH3: 0, // CH3の上下位置オフセット（初期値0）
 
     cursor: {
         show: false,       // カーソルのON/OFF
@@ -61,6 +70,7 @@ const scopeState = {
     signals: {
         'CH1': { type: 'sine', amplitude: 2.0, frequency: 50 }, // 初期値: 正弦波, 2V
         'CH2': { type: 'sine', amplitude: 2.0, frequency: 50 },  // 初期値: 正弦波, 2V
+        'CH3': { type: 'flat', amplitude: 0, frequency: 1, offset: 0 }, // ★追加: AD変換過程観察(TP5)用
     },
 
     ad_da: {
@@ -134,6 +144,10 @@ const menuDataAgilent = {
         title: "Vertical (CH2)",
         items: ["Coupling: DC", "Imped: 1M Ohm", "BW Limit: Off", "Vernier: Off", "Probe", "Invert: Off"]
     },
+    "CH3_MENU": {
+        title: "Vertical (CH3)",
+        items: ["Coupling: DC", "Imped: 1M Ohm", "BW Limit: Off", "Vernier: Off", "Probe", "Invert: Off"]
+    },
     "Measure": {
         title: "Measure Menu",
         items: ["Source: 1", "Type: Frequency", "Settings", "Clear Meas", "Statistics", "Thresholds"]
@@ -166,7 +180,7 @@ const descriptions = {
     "CH4_MENU": "CH4の詳細設定を行います。",
     "Ch1": "CH1入力端子。\n🔌 直流電源と結線するには：PS端子をクリックしてから、この端子をクリック\n（または Shift+クリックで選択開始）\n右クリックで切断",
     "Ch2": "CH2入力端子。\n🔌 直流電源と結線するには：PS端子をクリックしてから、この端子をクリック\n（または Shift+クリックで選択開始）\n右クリックで切断",
-    "Ch3": "CH3入力端子。",
+    "Ch3": "CH3入力端子。\n🔌 AD/DA変換機のTP5(比較器出力)などと結線するには：AD/DA側の端子をクリックしてから、この端子をクリック\n右クリックで切断\n※「AD変換器の変換過程の観察」実験では、CH1=TP3(S/H信号)、CH2=TP8、CH3=TP5(いずれも比較器出力)を接続します。",
     "Ch4": "CH4入力端子。",
 
     "Volt1": "【電圧軸ツマミ(CH1)】\nCH1の電圧スケール(V/div)を変更します。",
@@ -564,6 +578,8 @@ function drawMenuAgilent(data) {
         themeColor = "yellow"; // CH1選択時は黄色
     } else if (menuKey === 'CH2_MENU') {
         themeColor = "cyan";   // CH2選択時は水色
+    } else if (menuKey === 'CH3_MENU') {
+        themeColor = "#ff66ff"; // CH3選択時はマゼンタ
     }
 
     // 上部の境界線 (テーマカラーにする)
@@ -848,9 +864,12 @@ function drawWaveform() {
     const centerTimeShift = (canvas.width / 2 / pixelsPerGrid) * currentTimeDiv;
 
     // ==========================================
-    // 3. 波形描画ループ (CH1, CH2)
+    // 3. 波形描画ループ (CH1, CH2, [CH3])
+    //    CH3は現在表示中のモデルが対応している場合のみ描画する
+    //    （Hantek=2ch機、Agilent=Ch3端子ありの3ch分表示に対応）
     // ==========================================
-    ['CH1', 'CH2'].forEach(ch => {
+    const activeChannels = MODEL_CHANNELS[currentModelId] || ['CH1', 'CH2'];
+    activeChannels.forEach(ch => {
         const signal = scopeState.signals[ch];
         
         // チャンネルごとの設定（色、電圧レンジ、カップリング）
@@ -858,6 +877,10 @@ function drawWaveform() {
         if (ch === 'CH1') {
             voltIndex = scopeState.voltIndexCH1;
             color = 'yellow';
+            coupling = 'DC';
+        } else if (ch === 'CH3') {
+            voltIndex = scopeState.voltIndexCH3;
+            color = '#ff66ff'; // マゼンタ
             coupling = 'DC';
         } else {
             voltIndex = scopeState.voltIndexCH2;
@@ -876,11 +899,12 @@ function drawWaveform() {
         ctx.lineWidth = 2;
 
         // もともとの計算式に、マウスホイールで動かす position の値を足し算（または引き算）します
-        // ※ ch が 'CH1' か 'CH2' かによって足す変数を切り替えます
-        const wheelOffset = (ch === 'CH1') ? scopeState.positionCH1 : scopeState.positionCH2;
+        // ※ ch によって足す変数を切り替えます
+        const wheelOffsetFor = (c) => c === 'CH1' ? scopeState.positionCH1 : (c === 'CH3' ? scopeState.positionCH3 : scopeState.positionCH2);
+        const wheelOffset = wheelOffsetFor(ch);
 
         // 核心部分の行を、このように直接書いてみてください
-        const offsetPx = ((effectiveOffset / currentVoltDiv) * pixelsPerGrid) + ((ch === 'CH1') ? scopeState.positionCH1 : scopeState.positionCH2);
+        const offsetPx = ((effectiveOffset / currentVoltDiv) * pixelsPerGrid) + wheelOffset;
 
         // X座標（画面の左端から右端まで）ループ
         // 負荷軽減のため step=2 (2pxごとに計算) にしています
@@ -900,7 +924,7 @@ function drawWaveform() {
             let rawVolt = 0;
             if (scopeState.inputSource === 'power_supply') {
                 // 【直流電源モード】結線があり、電源と出力が両方ONの時だけ電圧を反映
-                const termName = ch === 'CH1' ? 'Ch1' : 'Ch2';
+                const termName = ch === 'CH1' ? 'Ch1' : (ch === 'CH3' ? 'Ch3' : 'Ch2');
                 const conn = wiringState.connections.find(c => c.oscTerminal === termName);
                 if (conn && psState.isOn && psState.isOutputOn) {
                     if (conn.psTerminal === 'ch1pura') {
@@ -1004,6 +1028,15 @@ function drawWaveform() {
     ctx.fillStyle = "cyan";
     const ch2Label = (scopeState.inputSource === 'fg') ? '原波形' : 'CH2';
     ctx.fillText(`${marker2}${ch2Label} ${vText2}`, 200, canvas.height - 20);
+
+    // --- CH3 情報（Agilentなど、Ch3端子を持つモデルのみ）---
+    if ((MODEL_CHANNELS[currentModelId] || []).includes('CH3')) {
+        const vDiv3 = VOLT_STEPS[scopeState.voltIndexCH3];
+        const vText3 = vDiv3 >= 1 ? `${vDiv3.toFixed(2)}V` : `${(vDiv3*1000).toFixed(0)}mV`;
+        const marker3 = (scopeState.activeChannel === 'CH3') ? "▶ " : "   ";
+        ctx.fillStyle = "#ff66ff";
+        ctx.fillText(`${marker3}CH3 ${vText3}`, 380, canvas.height - 20);
+    }
 
     // --- 時間軸 情報 ---
     ctx.fillStyle = "white";
@@ -1252,6 +1285,21 @@ containers.forEach(container => {
             
             updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
         }
+
+        // [C'] チャンネル選択 & メニュー表示 (CH3) ※AD変換過程観察(TP5)用
+        else if (title === 'CH3_MENU' || title === 'Ch3') {
+            if (!scopeState.isOn) return;
+            if( scopeState.currentMenu === 'CH3_MENU' ) {
+                scopeState.currentMenu = null;
+                updateControlPanelUI();
+                return;
+            } else {
+                scopeState.activeChannel = 'CH3';
+                scopeState.currentMenu = 'CH3_MENU';
+            }
+            
+            updateControlPanelUI();
+        }
         
         // [D] その他の汎用メニューボタン (Measure, Acquire, Utilityなど)
         else {
@@ -1325,21 +1373,29 @@ containers.forEach(container => {
             e.preventDefault();
 
             // どのツマミかを判定（モデルによってtitleが違うため、両方に対応）
-            // 例: Volt1, Volt3 は CH1用 / Volt2, Volt4 は CH2用
-            const isCH1Knob = (title === 'Volt1' || title === 'Volt3');
-            const isCH2Knob = (title === 'Volt2' || title === 'Volt4');
+            // Agilent実機はVolt1=CH1, Volt2=CH2, Volt3=CH3, Volt4=CH4に対応する独立したツマミ
+            const isCH1Knob = (title === 'Volt1');
+            const isCH2Knob = (title === 'Volt2');
+            const isCH3Knob = (title === 'Volt3');
             
             // Agilentモデルなどで 'KNOB_VOLT' と共通の名前になっている場合は、
             // 便宜上今まで通り activeChannel を参照するようにしておきます
             let targetCH = scopeState.activeChannel; 
             if (isCH1Knob) targetCH = 'CH1';
             if (isCH2Knob) targetCH = 'CH2';
+            if (isCH3Knob) targetCH = 'CH3';
 
             if (targetCH === 'CH1') {
                 if (e.deltaY > 0) {
                     if (scopeState.voltIndexCH1 < VOLT_STEPS.length - 1) scopeState.voltIndexCH1++;
                 } else {
                     if (scopeState.voltIndexCH1 > 0) scopeState.voltIndexCH1--;
+                }
+            } else if (targetCH === 'CH3') {
+                if (e.deltaY > 0) {
+                    if (scopeState.voltIndexCH3 < VOLT_STEPS.length - 1) scopeState.voltIndexCH3++;
+                } else {
+                    if (scopeState.voltIndexCH3 > 0) scopeState.voltIndexCH3--;
                 }
             } else {
                 // CH2の場合
@@ -1404,7 +1460,7 @@ containers.forEach(container => {
         }
 
         // --- 位置（Position）ツマミ ---
-        else if (title === 'Pos1' || title === 'Pos2') {
+        else if (title === 'Pos1' || title === 'Pos2' || title === 'Pos3') {
             e.preventDefault();
             if (!scopeState.isOn) return;
 
@@ -1414,6 +1470,10 @@ containers.forEach(container => {
                 // ツマミ画像の回転（任意）
                 const k = document.getElementById('Pos1');
                 if (k) k.style.transform = `rotate(${scopeState.positionCH1}deg)`;
+            } else if (title === 'Pos3') {
+                scopeState.positionCH3 += (e.deltaY < 0) ? step : -step;
+                const k = document.getElementById('Pos3');
+                if (k) k.style.transform = `rotate(${scopeState.positionCH3}deg)`;
             } else {
                 scopeState.positionCH2 += (e.deltaY < 0) ? step : -step;
                 const k = document.getElementById('Pos2');
@@ -1473,7 +1533,7 @@ containers.forEach(container => {
     // ★「機能が実装されている」ボタン名の一覧
     const activeFeatures = [
         "電源ボタン", "RunStop", "AutoSet", "Meas", 'Cursr',
-        "CH1_MENU", "CH2_MENU", "Ch1", "Ch2",
+        "CH1_MENU", "CH2_MENU", "CH3_MENU", "Ch1", "Ch2",
         "KNOB_TIME", "KNOB_VOLT",
         "Volt1", "Volt2", "Volt3", "Volt4",
         "Level", 'Cursrツマミ',
@@ -1604,6 +1664,7 @@ const TERMINAL_COLORS = {
     'grd':     '#007700', // 緑（GND）
     'Ch1':     '#ffff00', // 黄（オシロCH1）
     'Ch2':     '#00ffff', // 水色（オシロCH2）
+    'Ch3':     '#ff66ff', // マゼンタ（オシロCH3）
     'fctnout': '#ff6600', // オレンジ（FG メイン出力）
     'subout':  '#cc44ff', // 紫（FG サブ出力）
 };
@@ -1809,7 +1870,7 @@ function showWireStatus(msg, durationMs = 2500) {
 
 // 端子がPS側かオシロ側かを判定
 const PS_TERMINALS  = ['ch1pura','ch1mai','ch2pura','ch2mai','grd'];
-const OSC_TERMINALS = ['Ch1','Ch2'];
+const OSC_TERMINALS = ['Ch1','Ch2','Ch3'];
 const FG_TERMINALS  = ['fctnout','subout']; // 発振器の出力端子
 
 function getTerminalSide(name) {
@@ -1822,9 +1883,9 @@ function getTerminalSide(name) {
 // 接続情報をもとにオシロスコープの入力電圧を更新
 // 接続情報をもとにオシロスコープの入力電圧を更新
 function updateOscilloscopeSignal() {
-    // CH1/CH2 それぞれについて、結線があるか・電源ONか・出力ONかを確認
-    ['CH1', 'CH2'].forEach(ch => {
-        const termName = ch === 'CH1' ? 'Ch1' : 'Ch2';
+    // CH1/CH2/CH3 それぞれについて、結線があるか・電源ONか・出力ONかを確認
+    ['CH1', 'CH2', 'CH3'].forEach(ch => {
+        const termName = ch === 'CH1' ? 'Ch1' : (ch === 'CH3' ? 'Ch3' : 'Ch2');
         const conn = wiringState.connections.find(c => c.oscTerminal === termName);
 
         // 【修正】結線がない場合は、オシロの入力を 0V に戻して終了する
@@ -1860,8 +1921,8 @@ function updateFgWireSignal() {
     // 発振器がONかつ出力ONかどうかを確認
     const fgActive = fgState.power && fgState.outputOn;
 
-    ['CH1', 'CH2'].forEach(ch => {
-        const termName = ch === 'CH1' ? 'Ch1' : 'Ch2';
+    ['CH1', 'CH2', 'CH3'].forEach(ch => {
+        const termName = ch === 'CH1' ? 'Ch1' : (ch === 'CH3' ? 'Ch3' : 'Ch2');
         const conn = wiringState.connections.find(c => c.oscTerminal === termName && c.type === 'fg');
 
         if (!conn) return; // この ch への FG 接続なし → 変更しない
@@ -2769,6 +2830,12 @@ function getAdDaSignalVoltage(ch, signalTime, pixelX) {
 function getSignalVoltageRaw(ch, t) {
     const signal = scopeState.signals[ch];
     if (!signal) return 0;
+
+    // ★逐次比較AD変換器のビット列出力（サンプル/ホールド信号・比較器出力TP5/TP8など）
+    //   入力電圧に応じて実際に変化するデジタルパターンを再現する
+    if (signal.type === 'sarcode') {
+        return getSarBitsVoltage(signal, t);
+    }
     
     const freq = signal.frequency || 1;
     const amp  = signal.amplitude || 0;
@@ -2786,6 +2853,52 @@ function getSignalVoltageRaw(ch, t) {
     }
     
     return val * amp + (signal.offset || 0);
+}
+
+// =======================================================================
+// 逐次比較型AD変換器のビット列波形（TP3: サンプル/ホールド信号, TP5/TP8: 比較器出力）
+// =======================================================================
+// signal.bits: [先頭ビット, ...変換ビット(MSB→LSB)..., 末尾ビット] のようなビット配列(0/1)
+// signal.tsSec: サンプリング周期 [秒]。この周期内で bits を等分割し、周期的に繰り返す。
+// signal.low / signal.high: 論理0/1に対応する電圧
+function getSarBitsVoltage(signal, t) {
+    const ts = signal.tsSec;
+    const bits = signal.bits;
+    if (!ts || !bits || bits.length === 0) return 0;
+
+    // tを[0, ts)の範囲に正規化（負の時刻・複数周期にも対応）
+    let tt = t % ts;
+    if (tt < 0) tt += ts;
+
+    const slotDur = ts / bits.length;
+    let idx = Math.floor(tt / slotDur);
+    if (idx < 0) idx = 0;
+    if (idx >= bits.length) idx = bits.length - 1;
+
+    const low  = (signal.low  !== undefined) ? signal.low  : 0;
+    const high = (signal.high !== undefined) ? signal.high : 5;
+
+    return bits[idx] ? high : low;
+}
+
+// 逐次比較の結果コードから、比較器出力のビット列（先頭に変換開始マーカー、
+// 末尾に変換終了マーカーの計2ビットを付加）を作る。
+// PDFの考察事項①「比較器出力にはAD変換結果のビット列に加えて2ビット付加されている」を再現する。
+function buildSarOutputBits(code, resolution) {
+    const bits = [1]; // 変換開始マーカー（S/H制御と同期する立ち上がり）
+    for (let i = resolution - 1; i >= 0; i--) {
+        bits.push((code >> i) & 1); // MSBから順にビットを出力
+    }
+    bits.push(0); // 変換終了(EOC)マーカー
+    return bits;
+}
+
+// サンプル/ホールド制御信号（TP3）: 各周期の先頭で短いパルス（サンプル）→残りはHOLD(0)
+function buildSarSyncBits(resolution) {
+    const total = resolution + 2; // 比較器出力と同じ周期構造に揃えて時間軸を対応させる
+    const bits = new Array(total).fill(0);
+    bits[0] = 1;
+    return bits;
 }
 
 // AD/DA変換装置が接続されているかを確認して適切な電圧を返す
@@ -3210,10 +3323,37 @@ function makeAdDaTerminalSignal(terminalName) {
     }
 
     if (terminalName === 'TP1') return input;
-    if (terminalName === 'TP3') return { type: 'square', amplitude: 2.5, frequency: fsHz, offset: 2.5, source: 'fg' };
-    if (terminalName === 'TP5' || terminalName === 'TP8') {
-        return { type: 'square', amplitude: 2.5, frequency: Math.max(1, fsHz / Math.max(1, adDaState.resolution)), offset: 2.5, source: 'fg' };
+
+    const tsSec = adDaState.samplingPeriodUs * 1e-6;
+
+    // TP3: サンプル/ホールド制御信号（各サンプリング周期の先頭で短いパルス）
+    if (terminalName === 'TP3') {
+        return {
+            type: 'sarcode',
+            bits: buildSarSyncBits(adDaState.resolution),
+            tsSec,
+            low: 0,
+            high: 5,
+            source: 'fg'
+        };
     }
+
+    // TP5 / TP8: 比較器出力。実際の入力電圧を逐次比較型AD変換器で変換した際の
+    // ビット列（開始マーカー1bit + 変換結果nbit(MSB→LSB) + 終了マーカー1bit）を
+    // 入力電圧が変わるたびに再計算して表示する。
+    if (terminalName === 'TP5' || terminalName === 'TP8') {
+        const voltage = getAdDaInputVoltage();
+        const code = getAdDaCode(voltage);
+        return {
+            type: 'sarcode',
+            bits: buildSarOutputBits(code, adDaState.resolution),
+            tsSec,
+            low: 0,
+            high: 5,
+            source: 'fg'
+        };
+    }
+
     return { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg' };
 }
 
@@ -3222,9 +3362,11 @@ function makeAdDaTerminalSignal(terminalName) {
 function getAdDaTerminalDisplayFrequency(terminalName) {
     const fsHz = 1000000 / adDaState.samplingPeriodUs;
 
-    if (terminalName === 'TP3') return fsHz;
-    if (terminalName === 'TP5' || terminalName === 'TP8') {
-        return Math.max(1, fsHz / Math.max(1, adDaState.resolution));
+    // TP3/TP5/TP8は1サンプリング周期(Ts)を「resolution+2」個のビットスロットに
+    // 分割した内部クロックで動くため、見やすい時間軸にするには fs より速い
+    // (resolution+2)倍の周波数を基準にスケーリングする
+    if (terminalName === 'TP3' || terminalName === 'TP5' || terminalName === 'TP8') {
+        return fsHz * (adDaState.resolution + 2);
     }
     if (terminalName === 'TB5' || terminalName === 'TP1') {
         // 発振器が結線されていて出力ONの時だけ、その周波数に合わせる
@@ -3242,7 +3384,7 @@ function updateAdDaTerminalSignals() {
     wiringState.connections
         .filter(c => c.type === 'adda')
         .forEach(conn => {
-            const channel = conn.oscTerminal === 'Ch1' ? 'CH1' : 'CH2';
+            const channel = conn.oscTerminal === 'Ch1' ? 'CH1' : (conn.oscTerminal === 'Ch3' ? 'CH3' : 'CH2');
             const termName = conn.addaTerminal || conn.psTerminal;
             scopeState.signals[channel] = makeAdDaTerminalSignal(termName);
 
