@@ -1018,7 +1018,7 @@ function drawWaveform() {
     const vText1 = vDiv1 >= 1 ? `${vDiv1.toFixed(2)}V` : `${(vDiv1*1000).toFixed(0)}mV`;
     const marker1 = (scopeState.activeChannel === 'CH1') ? "▶ " : "   ";
     ctx.fillStyle = "yellow";
-    const ch1Label = getChannelDisplayLabel('CH1');
+    const ch1Label = (scopeState.inputSource === 'fg') ? 'DA出力' : 'CH1';
     ctx.fillText(`${marker1}${ch1Label} ${vText1}`, 20, canvas.height - 20);
 
     // --- CH2 情報 ---
@@ -1026,8 +1026,8 @@ function drawWaveform() {
     const vText2 = vDiv2 >= 1 ? `${vDiv2.toFixed(2)}V` : `${(vDiv2*1000).toFixed(0)}mV`;
     const marker2 = (scopeState.activeChannel === 'CH2') ? "▶ " : "   ";
     ctx.fillStyle = "cyan";
-    const ch2Label = getChannelDisplayLabel('CH2');
-    ctx.fillText(`${marker2}${ch2Label} ${vText2}`, 260, canvas.height - 20);
+    const ch2Label = (scopeState.inputSource === 'fg') ? '原波形' : 'CH2';
+    ctx.fillText(`${marker2}${ch2Label} ${vText2}`, 200, canvas.height - 20);
 
     // --- CH3 情報（Agilentなど、Ch3端子を持つモデルのみ）---
     if ((MODEL_CHANNELS[currentModelId] || []).includes('CH3')) {
@@ -1391,11 +1391,6 @@ containers.forEach(container => {
                 } else {
                     if (scopeState.voltIndexCH1 > 0) scopeState.voltIndexCH1--;
                 }
-                // Volt/Divが変わったら、トリガーレベルも新しいレンジに収まるよう再クランプする
-                const newRange = VOLT_STEPS[scopeState.voltIndexCH1];
-                const newMaxLevel = newRange * 4;
-                if (scopeState.trigger.level > newMaxLevel) scopeState.trigger.level = newMaxLevel;
-                if (scopeState.trigger.level < -newMaxLevel) scopeState.trigger.level = -newMaxLevel;
             } else if (targetCH === 'CH3') {
                 if (e.deltaY > 0) {
                     if (scopeState.voltIndexCH3 < VOLT_STEPS.length - 1) scopeState.voltIndexCH3++;
@@ -1432,13 +1427,6 @@ containers.forEach(container => {
             } else { // 手前へ回す（レベル下げる）
                 scopeState.trigger.level -= step;
             }
-
-            // 画面に収まる範囲（縦4div分）にクランプ。
-            // クランプが無いとホイールを回しすぎた時に "T: 163.00V" のような
-            // 非現実的な値まで際限なく増減してしまうため。
-            const maxLevel = currentRange * 4;
-            if (scopeState.trigger.level > maxLevel) scopeState.trigger.level = maxLevel;
-            if (scopeState.trigger.level < -maxLevel) scopeState.trigger.level = -maxLevel;
         }
         // --- 直流電源のツマミ操作 ---
         else if (title === 'volt') {
@@ -2730,6 +2718,13 @@ function updateFgDisplay() {
 //  発振器 → オシロスコープ 信号連携
 // =======================================================================
 function updateFgToOscilloscope() {
+    // 発振器がAD/DA変換機のTB1に結線されている場合は、
+    // チャンネルへの信号書き込みをここでは行わない。
+    // （updateAdDaTerminalSignals() が端子ごとに正確に担当するため、
+    //   ここで書くと「未結線のCH2にも勝手に信号が出る」バグの原因になる）
+    const hasFgAddaConn = wiringState.connections.some(c => c.type === 'fg-adda');
+    if (hasFgAddaConn) return;
+
     // 発振器がONかつ出力ONの場合のみオシロに信号を送る
     if (fgState.power && fgState.outputOn && adDaState.inputSource === 'fg') {
         // 波形タイプをscope形式に変換
@@ -2817,38 +2812,6 @@ function getAdDaVoltage(rawVolt, adda) {
     const quantized = Math.round(clipped / q) * q;
 
     return quantized;
-}
-
-// オシロの各チャンネルに、実際に何が結線されているかに応じたラベルを返す。
-// AD/DA変換機の各端子（TP3/TP5/TP8/TB5/TP1など）を繋いだ時、常に「DA出力」
-// 「原波形」と表示されてしまっていた問題を修正するためのヘルパー。
-function getChannelDisplayLabel(channelKey) {
-    const oscTerm = channelKey === 'CH1' ? 'Ch1' : 'Ch2';
-
-    // AD/DA変換機の端子が繋がっている場合は、その端子名を表示する
-    const addaConn = wiringState.connections.find(c => c.type === 'adda' && c.oscTerminal === oscTerm);
-    if (addaConn) {
-        const term = addaConn.addaTerminal || addaConn.psTerminal;
-        const friendlyNames = {
-            TB5: 'DA出力(TB5)',
-            TP1: '原波形(TP1)',
-            TP3: 'S/H信号(TP3)',
-            TP5: '比較器出力(TP5)',
-            TP8: '比較器出力(TP8)',
-        };
-        return friendlyNames[term] || term || channelKey;
-    }
-
-    // 発振器や直流電源が直接オシロに結線されている場合はチャンネル名のまま
-    const fgConn = wiringState.connections.find(c => c.type === 'fg' && c.oscTerminal === oscTerm);
-    const psConn = wiringState.connections.find(c => c.type === 'ps' && c.oscTerminal === oscTerm);
-    if (fgConn || psConn) return channelKey;
-
-    // 何も結線されていない場合の従来表示（後方互換）
-    if (scopeState.inputSource === 'fg') {
-        return channelKey === 'CH1' ? 'DA出力' : '原波形';
-    }
-    return channelKey;
 }
 
 // AD/DA変換後の波形の電圧値を取得（サンプリングも考慮）
@@ -3425,9 +3388,24 @@ function getAdDaTerminalDisplayFrequency(terminalName) {
 function updateAdDaTerminalSignals() {
     let maxDisplayFreq = 0;
 
-    wiringState.connections
-        .filter(c => c.type === 'adda')
-        .forEach(conn => {
+    // AD/DA端子に接続されているオシロチャンネルを特定する
+    const addaConns = wiringState.connections.filter(c => c.type === 'adda');
+    const addaWiredChannels = new Set(
+        addaConns.map(c => c.oscTerminal === 'Ch1' ? 'CH1' : (c.oscTerminal === 'Ch3' ? 'CH3' : 'CH2'))
+    );
+
+    // 結線が外れたチャンネルはflatに戻す（以前の信号が残らないようにする）
+    // fg-adda結線が存在する場合のみ対象（直接fg→oscの場合は触らない）
+    const hasFgAddaConn = wiringState.connections.some(c => c.type === 'fg-adda');
+    if (hasFgAddaConn) {
+        ['CH1', 'CH2', 'CH3'].forEach(ch => {
+            if (!addaWiredChannels.has(ch)) {
+                scopeState.signals[ch] = { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg' };
+            }
+        });
+    }
+
+    addaConns.forEach(conn => {
             const channel = conn.oscTerminal === 'Ch1' ? 'CH1' : (conn.oscTerminal === 'Ch3' ? 'CH3' : 'CH2');
             const termName = conn.addaTerminal || conn.psTerminal;
             scopeState.signals[channel] = makeAdDaTerminalSignal(termName);
