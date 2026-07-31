@@ -5,9 +5,9 @@
 // --- 1. グローバル変数と初期設定 ---
 
 let currentModelId = 'agilent';
-let canvas = document.querySelector('#canvas-agilent');
+let canvas = document.querySelector('#canvas-agilent') || document.createElement('canvas');
 let ctx = canvas.getContext('2d');
-let tooltip = document.querySelector('#tooltip-agilent');
+let tooltip = document.querySelector('#tooltip-agilent') || document.createElement('div');
 
 // モデルごとに使用可能なチャンネル一覧
 // Hantekは2ch機、Agilent(MSOX2004A)はCh3端子があるため3ch分表示に対応
@@ -2364,6 +2364,148 @@ function bringToFront(elm) {
 function toggleSidebar() {
     document.getElementById('equipment-sidebar').classList.toggle('open');
 }
+
+function toggleExperimentSidebar() {
+    document.getElementById('experiment-sidebar').classList.toggle('open');
+}
+
+const EXPERIMENT_DATA = {
+    exp1: {
+        title: '手順1：AD変換器の変換過程の観察',
+        body: `
+            <h4 style="margin:0 0 12px;color:#2c3e50;">【配線】</h4>
+            <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px;">
+                <tr style="background:#f0f4f8;"><th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">接続元</th><th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">接続先</th><th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">端子</th></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd;">直流電源 CH1(+)</td><td style="padding:6px 10px;border:1px solid #ddd;">AD/DA変換機</td><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;">TB1</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd;">直流電源 CH1(−)</td><td style="padding:6px 10px;border:1px solid #ddd;">AD/DA変換機</td><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;">TB2</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd;">AD/DA変換機 TP3</td><td style="padding:6px 10px;border:1px solid #ddd;">オシロスコープ</td><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;">Ch1（S/H制御信号）</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd;">AD/DA変換機 TP8</td><td style="padding:6px 10px;border:1px solid #ddd;">オシロスコープ</td><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;">Ch2（比較器出力）</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd;">AD/DA変換機 TP5</td><td style="padding:6px 10px;border:1px solid #ddd;">オシロスコープ</td><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;">Ch3（比較器出力）</td></tr>
+            </table>
+            <h4 style="margin:0 0 8px;color:#2c3e50;">【スイッチ設定】</h4>
+            <ul style="margin:0 0 12px;padding-left:18px;">
+                <li>SW1：A-D入力（TB1結線で自動切替）</li>
+                <li>SW4：<strong>8ビット</strong></li>
+                <li>SW5：<strong>ユニポーラ</strong></li>
+                <li>SW6：OFF　SW7：ユニポーラ　SW8：OFF</li>
+                <li>サンプリング周期：<strong>5µs</strong></li>
+            </ul>
+            <h4 style="margin:0 0 8px;color:#2c3e50;">【直流電源の設定】</h4>
+            <ul style="margin:0 0 12px;padding-left:18px;">
+                <li>CH1を使用し、出力電圧を <strong>5V</strong> にセット → OUTPUT ON</li>
+                <li>その後、電圧を数種類変えて繰り返す</li>
+            </ul>
+            <div style="background:#fff3cd;padding:10px 14px;border-radius:4px;font-size:13px;">
+                💡 TP3（S/H制御信号）は一定周期のパルス波形が観測されます。TP8・TP5（比較器出力）は逐次比較のビット列パターンが観測されます。
+            </div>
+        `
+    },
+    exp2: {
+        title: '手順2：AD変換における入出力電圧特性の測定',
+        body: `
+            <h4 style="margin:0 0 12px;color:#2c3e50;">【配線】手順1と同じ（TP3/TP8/TP5はオシロ接続不要）</h4>
+            <ul style="margin:0 0 12px;padding-left:18px;">
+                <li>直流電源 CH1(+) → AD/DA変換機 <strong>TB1</strong></li>
+                <li>直流電源 CH1(−) → AD/DA変換機 <strong>TB2</strong></li>
+            </ul>
+            <h4 style="margin:0 0 8px;color:#2c3e50;">【測定①】量子化ビット数 = 4bit</h4>
+            <ul style="margin:0 0 12px;padding-left:18px;">
+                <li>SW4を <strong>4ビット</strong> に設定</li>
+                <li>直流電源の出力電圧を <strong>0V〜10.20V</strong> まで段階的に変化</li>
+                <li>各電圧でのデジタルコード（2進数）を記録</li>
+                <li>グラフ：横軸＝入力電圧、縦軸＝デジタルコード（階段状になるはず）</li>
+            </ul>
+            <h4 style="margin:0 0 8px;color:#2c3e50;">【測定②】量子化ビット数 = 8bit</h4>
+            <ul style="margin:0 0 12px;padding-left:18px;">
+                <li>SW4を <strong>8ビット</strong> に設定</li>
+                <li>直流電源の出力電圧を <strong>5.12V ± 5%</strong> 程度（約 4.86V〜5.38V）の範囲で変化</li>
+                <li>各電圧でのデジタルコードを記録し同様のグラフを作成</li>
+            </ul>
+            <div style="background:#fff3cd;padding:10px 14px;border-radius:4px;font-size:13px;">
+                💡 FSR = 10.24V、量子化ステップ q = FSR/2ⁿ です。4bit では q=0.64V、8bit では q=0.04V となり、8bitの方が細かく変化します。
+            </div>
+        `
+    },
+    exp3: {
+        title: '手順3：AD/DA変換後の波形の観察',
+        body: `
+            <h4 style="margin:0 0 12px;color:#2c3e50;">【配線】</h4>
+            <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px;">
+                <tr style="background:#f0f4f8;"><th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">接続元</th><th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">接続先</th><th style="padding:6px 10px;text-align:left;border:1px solid #ddd;">端子</th></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd;">発振器 OUTPUT</td><td style="padding:6px 10px;border:1px solid #ddd;">AD/DA変換機</td><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;">TB1</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd;">AD/DA変換機 TB5</td><td style="padding:6px 10px;border:1px solid #ddd;">オシロスコープ</td><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;">Ch1（DA出力）</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd;">AD/DA変換機 TP1</td><td style="padding:6px 10px;border:1px solid #ddd;">オシロスコープ</td><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;">Ch2（原波形）</td></tr>
+            </table>
+            <h4 style="margin:0 0 8px;color:#2c3e50;">【スイッチ設定】</h4>
+            <ul style="margin:0 0 12px;padding-left:18px;">
+                <li>SW1：A-D入力　SW5・SW7：<strong>バイポーラ</strong>　SW6・SW8：OFF</li>
+            </ul>
+            <h4 style="margin:0 0 8px;color:#2c3e50;">【発振器の設定】</h4>
+            <ul style="margin:0 0 4px;padding-left:18px;">
+                <li>波形：正弦波（SINE）、振幅：<strong>3V</strong>、周波数：<strong>1000Hz</strong></li>
+            </ul>
+            <h4 style="margin:0 0 8px;color:#2c3e50;margin-top:10px;">【観察パターン】</h4>
+            <ul style="margin:0 0 12px;padding-left:18px;">
+                <li>基本条件：サンプリング周期 <strong>5µs</strong>、量子化ビット数 <strong>8bit</strong> → 両波形がほぼ重なる</li>
+                <li>サンプリング周期を 10µs → 50µs → 100µs → 200µs → <strong>500µs</strong> に変更して観察</li>
+                <li>量子化ビット数を <strong>4bit</strong> に変更して観察（波形が粗くなる）</li>
+                <li>発振器の周波数を <strong>4000Hz</strong> に変更し、同様に繰り返す</li>
+            </ul>
+            <div style="background:#fff3cd;padding:10px 14px;border-radius:4px;font-size:13px;">
+                💡 サンプリング周期を長くすると階段が粗くなります。fs/2（ナイキスト周波数）を下回る前にエイリアスが発生します。
+            </div>
+        `
+    },
+    exp4: {
+        title: '手順4：AD/DA変換時の入出力周波数特性の測定',
+        body: `
+            <h4 style="margin:0 0 12px;color:#2c3e50;">【配線】手順3と同じ</h4>
+            <ul style="margin:0 0 12px;padding-left:18px;">
+                <li>発振器 OUTPUT → AD/DA <strong>TB1</strong></li>
+                <li>AD/DA <strong>TB5</strong>（DA出力）→ オシロ Ch1</li>
+                <li>AD/DA <strong>TP1</strong>（原波形）→ オシロ Ch2</li>
+            </ul>
+            <h4 style="margin:0 0 8px;color:#2c3e50;">【発振器の設定】</h4>
+            <ul style="margin:0 0 4px;padding-left:18px;">
+                <li>波形：正弦波（SINE）、振幅：<strong>3V</strong></li>
+            </ul>
+            <h4 style="margin:0 0 8px;color:#2c3e50;margin-top:10px;">【測定①】サンプリング周期 = 5µs（fs = 200kHz）</h4>
+            <p style="margin:4px 0 8px;font-size:13px;">以下の周波数で順に観察・記録：</p>
+            <p style="margin:0 0 12px;font-weight:bold;letter-spacing:1px;font-size:13px;">
+                1kHz → 2.5kHz → 5kHz → 10kHz → 100kHz → 150kHz → 200kHz
+            </p>
+            <h4 style="margin:0 0 8px;color:#2c3e50;">【測定②】サンプリング周期 = 200µs（fs = 5kHz）</h4>
+            <p style="margin:4px 0 8px;font-size:13px;">同じ周波数で繰り返す。fs/2 = 2.5kHz を超えるとエイリアスが発生します。</p>
+            <div style="background:#fff3cd;padding:10px 14px;border-radius:4px;font-size:13px;">
+                💡 エイリアス周波数： f_out = |f_in − n × fs|（nは整数）で計算できます。<br>
+                例：fs=5kHz、f_in=4kHz → f_out = |4000 − 5000| = <strong>1000Hz</strong> として折り返されます。<br>
+                オシロ画面左上に「⚠ エイリアス！」と表示される条件を確認してください。
+            </div>
+        `
+    }
+};
+
+function showExperiment(expId) {
+    const data = EXPERIMENT_DATA[expId];
+    if (!data) return;
+    document.getElementById('exp-modal-title').textContent = data.title;
+    document.getElementById('exp-modal-body').innerHTML = data.body;
+    const modal = document.getElementById('experiment-modal');
+    modal.style.display = 'block';
+    modal.style.pointerEvents = 'auto';
+}
+
+function closeExperimentModal() {
+    const modal = document.getElementById('experiment-modal');
+    modal.style.display = 'none';
+    modal.style.pointerEvents = 'none';
+}
+
+// モーダル外クリックで閉じる
+document.addEventListener('click', function(e) {
+    const modal = document.getElementById('experiment-modal');
+    if (modal && e.target === modal) closeExperimentModal();
+});
 
 function toggleEquipment(eqId) {
     const container = document.getElementById(eqId + '-container');

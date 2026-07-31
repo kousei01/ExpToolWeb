@@ -349,56 +349,85 @@
     <!-- ========================================== -->
     <div id="manual-screen" class="manual-container" style="display: none;">
         <div class="manual-paper">
-            <h2>実験器具の使い方学習サイト 使い方</h2>
-            
+            <h2>§2-II-7 AD変換 / DA変換 シミュレータ 操作説明書</h2>
+
             <div class="manual-section">
-                <h3>1. 基本操作</h3>
+                <h3>1. 実験機材の表示・非表示</h3>
+                <p>画面右端の <span class="highlight">◀ 実験器具</span> タブをクリックするとサイドバーが開き、各器具のON/OFFを切り替えられます。</p>
                 <ul>
-                    <li><strong>ボタンクリック:</strong> 画面上のボタンやメニューをクリックして操作します。</li>
-                    <li><strong>ツマミ操作 (重要):</strong> 
-                        <span class="highlight">「電圧ツマミ」や「時間ツマミ」の上にマウスを乗せ、ホイールを回転</span>させると値を変更できます。
-                        <br>（手前に回すと拡大、奥に回すと縮小）
-                    </li>
-                    <li><strong>モデル切替:</strong> コントロールパネル左側のボタンで、学習したい機種を切り替えます。</li>
+                    <li><strong>📺 オシロスコープ</strong>：波形を観察します（Agilent MSOX2004A）</li>
+                    <li><strong>🔋 直流電源</strong>：AD/DA変換機のアナログ入力にDC電圧を供給します（手順1・2で使用）</li>
+                    <li><strong>🔊 発振器</strong>：AD/DA変換機にサイン波などを入力します（手順3・4で使用）</li>
+                    <li><strong>AD/DA変換機</strong>：器具リストをクリックまたは最初から表示されています（ITF-203B）</li>
+                </ul>
+                <p>各器具はドラッグ（タイトルバーをつかむ）で画面内を自由に移動できます。SIZE ADJUSTスライダーで個別に拡大縮小も可能です。</p>
+            </div>
+
+            <div class="manual-section">
+                <h3>2. 結線の方法</h3>
+                <p>実機と同様に、端子同士をクリックして接続します。</p>
+                <ul>
+                    <li><strong>接続：</strong>片方の端子をクリック（選択状態になる）→ もう片方の端子をクリック → 結線完了</li>
+                    <li><strong>切断：</strong>端子を右クリック、または上部パネルの <span class="highlight">🔌 結線クリア</span> で全切断</li>
+                    <li>端子の当たり判定は <span style="color:rgba(0,0,255,0.9); font-weight:bold;">青色</span>（AD/DA）または <span style="color:rgba(255,0,0,0.9); font-weight:bold;">赤色</span>（その他）の半透明ボックスで示されます</li>
+                </ul>
+                <p><strong>主な接続パターン：</strong></p>
+                <ul>
+                    <li>直流電源 CH1(+) → AD/DA <strong>TB1</strong>、CH1(−) → <strong>TB2</strong></li>
+                    <li>発振器 OUTPUT → AD/DA <strong>TB1</strong></li>
+                    <li>AD/DA <strong>TB5</strong>（DA出力）→ オシロ Ch1</li>
+                    <li>AD/DA <strong>TP1</strong>（原波形）→ オシロ Ch2</li>
+                    <li>AD/DA <strong>TP3</strong>（S/H信号）→ オシロ Ch1、<strong>TP8</strong>（比較器出力）→ Ch2、<strong>TP5</strong> → Ch3</li>
                 </ul>
             </div>
 
             <div class="manual-section">
-                <h3>2. 画面の見方</h3>
-                <p>画面下部に現在の設定値が表示されます。</p>
+                <h3>3. オシロスコープの操作</h3>
                 <ul>
-                    <li><span style="color:#f1c40f;">■ 黄色文字</span> : CH1の設定 (電圧レンジなど)</li>
-                    <li><span style="color:#00ffff;">■ 水色文字</span> : CH2の設定</li>
-                    <li><span style="color:#000;">■ 白色文字</span> : 時間軸の設定 (Time/Div)</li>
+                    <li><strong>時間軸（KNOB_TIME）：</strong>ツマミの上でマウスホイールを回すと Time/Div が変わります</li>
+                    <li><strong>電圧軸（Volt1〜Volt4）：</strong>各チャンネルのツマミの上でホイールを回すと Volt/Div が変わります</li>
+                    <li><strong>RunStop：</strong>波形の更新を停止（STOP）／再開（RUN）します</li>
+                    <li><strong>AutoSet：</strong>現在の信号に合わせて時間軸・電圧軸を自動調整します</li>
+                    <li><strong>カーソル（Cursr）：</strong>クリックするたびにカーソルA → カーソルB → OFF と切り替わります。CursorA / CursorB ツマミでホイール操作すると位置を動かせます。時間差ΔTと電圧差ΔVが画面に表示されます</li>
+                    <li><strong>トリガーレベル（Level）：</strong>ツマミの上でホイールを回すとトリガーレベルが変わります（画面右上 T: xx.xxV）</li>
                 </ul>
             </div>
 
             <div class="manual-section">
-                <h3>3. 実技テストモード</h3>
-                <p>「★ 実技テストを開始する」ボタンを押すと、課題が出題されます。</p>
+                <h3>4. AD/DA変換機（ITF-203B）の操作</h3>
                 <ul>
-                    <li>出題されると、オシロスコープの設定が自動的に「悪い状態」に変更されます。</li>
-                    <li>問題文の指示に従って、正しい波形が表示されるようにツマミやボタンを操作してください。</li>
-                    <li>設定ができたら「解答する」ボタンを押して採点します。</li>
+                    <li><strong>SW1（入力切換）：</strong>クリックで A-D入力（外部）/ マイク入力を切替。TB1に結線がある場合は自動で外部信号モードになります</li>
+                    <li><strong>SW4（ビット数 / サンプリング周期）：</strong>クリックで量子化ビット数（4bit / 8bit）を切替</li>
+                    <li><strong>SW5 / SW7（バイポーラ / ユニポーラ）：</strong>クリックで動作モードを切替（手順1はユニポーラ、手順3・4はバイポーラ）</li>
+                    <li><strong>SW6 / SW8：</strong>OFFのまま使用します</li>
+                    <li><strong>サンプリング周期切換（SAMPLING BS/00 横）：</strong>クリックで 5µs → 10µs → 50µs → 100µs → 200µs → 500µs → 5µs … と順に切替</li>
                 </ul>
+                <p>現在の設定（サンプリング周期・量子化ビット数・入力モード）はオシロスコープ画面の左上に常に表示されます。</p>
             </div>
 
             <div class="manual-section">
-                <h3>4. ボタン実装状況</h3>
-                <p>ボタンやツマミの機能を実装しているところを掲載します。(2025/12/12 時点)</p>
-                <p>青い当たり判定が付いてる部分が機能実装済です。</p>
+                <h3>5. 実験手順タブ（左サイドバー）</h3>
+                <p>画面左端の <span class="highlight">実験 ▶</span> タブをクリックするとサイドバーが開き、手順1〜4の配線・設定内容を確認できます。各手順をクリックすると詳細がポップアップ表示されます。</p>
+            </div>
+
+            <div class="manual-section">
+                <h3>6. 実装済み機能一覧</h3>
                 <ul>
-                    <li>電源ボタン: 実装済み</li>
-                    <li>CH1_MENU, CH2_MENU: 実装済み (基本設定のみ)</li>
-                    <li>RunStop, AutoSet: 実装済み</li>
-                    <li>時間ツマミ, 電圧ツマミ: 実装済み (ホイール操作対応)</li>
-                    <li>その他のボタン: 順次追加予定</li>
+                    <li>✅ オシロスコープ波形表示（CH1 / CH2 / CH3）</li>
+                    <li>✅ 時間軸・電圧軸ツマミ（ホイール操作）</li>
+                    <li>✅ RunStop / AutoSet / カーソル（縦線A・B、ΔT・ΔV表示）</li>
+                    <li>✅ 発振器（周波数・振幅・波形種類・オフセット設定）</li>
+                    <li>✅ 直流電源（電圧設定・OUTPUT ON/OFF）</li>
+                    <li>✅ AD/DA変換機との結線（TB1/TB2/TB5/TP1/TP3/TP5/TP8）</li>
+                    <li>✅ 量子化ビット数切替（4bit / 8bit）</li>
+                    <li>✅ サンプリング周期切替（5µs〜500µs）</li>
+                    <li>✅ DA出力波形の階段状再現・エイリアス警告表示</li>
+                    <li>✅ 逐次比較型AD変換器のビット列波形（TP3/TP5/TP8）</li>
                 </ul>
             </div>
 
-            
             <div style="text-align:center; margin-top:30px;">
-                <button class="panel-btn active" onclick="switchModelUI('agilent')">閉じてオシロスコープに戻る</button>
+                <button class="panel-btn active" onclick="switchModelUI('agilent')">閉じてシミュレータに戻る</button>
             </div>
         </div>
     </div>
@@ -424,8 +453,47 @@
     </div>
 </div>
 
-<!-- JavaScriptファイルの読み込み -->
-<script src="script.js"></script>
+<!-- 実験番号サイドバー（左側） -->
+<div id="experiment-sidebar" class="experiment-sidebar">
+    <div class="sidebar-tab experiment-tab" onclick="toggleExperimentSidebar()">
+        実験 ▶
+    </div>
+    <div class="sidebar-content">
+        <h3 style="margin-top: 0; padding-bottom: 10px; border-bottom: 1px solid #ccc;">実験番号</h3>
+        <ul class="equipment-list">
+            <li onclick="showExperiment('exp1')">
+                <span style="font-size:11px;color:#888;">手順1</span><br>
+                AD変換過程の観察
+            </li>
+            <li onclick="showExperiment('exp2')">
+                <span style="font-size:11px;color:#888;">手順2</span><br>
+                入出力電圧特性の測定
+            </li>
+            <li onclick="showExperiment('exp3')">
+                <span style="font-size:11px;color:#888;">手順3</span><br>
+                AD/DA変換後の波形観察
+            </li>
+            <li onclick="showExperiment('exp4')">
+                <span style="font-size:11px;color:#888;">手順4</span><br>
+                入出力周波数特性の測定
+            </li>
+        </ul>
+    </div>
+</div>
 
+<!-- 実験手順モーダル -->
+<div id="experiment-modal" style="display:none; pointer-events:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:2000; overflow:auto;">
+    <div style="background:#fff; max-width:680px; margin:40px auto; border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.4); font-family:'Hiragino Sans',Meiryo,sans-serif;">
+        <div style="background:#2c3e50; color:#fff; padding:16px 20px; border-radius:8px 8px 0 0; display:flex; justify-content:space-between; align-items:center;">
+            <span id="exp-modal-title" style="font-size:16px; font-weight:bold;"></span>
+            <button onclick="closeExperimentModal()" style="background:none; border:none; color:#fff; font-size:22px; cursor:pointer; line-height:1;">✕</button>
+        </div>
+        <div id="exp-modal-body" style="padding:24px 28px; line-height:1.8; color:#333; font-size:14px;"></div>
+    </div>
+</div>
+
+
+
+<script src="script.js"></script>
 </body>
 </html>

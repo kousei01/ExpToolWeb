@@ -490,7 +490,45 @@ body {
     pointer-events: auto;
 }
 
-/* AD/DA変換機のクリック範囲を青色にする */
-#model-adda .hotspot {
-    background-color: rgba(0, 0, 255, 0.3);
+/* --- 実験番号サイドバー（左側）--- */
+.experiment-sidebar {
+    position: fixed;
+    top: 50px;
+    left: -250px;   /* 初期状態は画面外（左に隠す） */
+    width: 250px;
+    height: 100%;
+    background-color: #f8f9fa;
+    box-shadow: 2px 0 10px rgba(0,0,0,0.2);
+    transition: left 0.3s ease;
+    z-index: 1000;
+}
+
+.experiment-sidebar.open {
+    left: 0;
+}
+
+.experiment-tab {
+    position: absolute;
+    right: -45px;   /* 右側に飛び出す（右サイドバーとは逆） */
+    left: auto;
+    top: 20px;
+    width: 45px;
+    height: 120px;
+    background-color: #27ae60; /* 緑色で右サイドバーと区別 */
+    color: #fff;
+    font-weight: bold;
+    cursor: pointer;
+    border-radius: 0 8px 8px 0;
+    writing-mode: vertical-rl;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    letter-spacing: 2px;
+}
+
+/* 実験手順リストの行を少し縦に広く */
+.experiment-sidebar .equipment-list li {
+    line-height: 1.5;
+    padding: 12px 10px;
 }
