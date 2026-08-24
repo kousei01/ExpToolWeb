@@ -1062,8 +1062,10 @@ function drawWaveform() {
         const inputFreq = fgState.freq;
         const nyquist = fsHz / 2;
         if (inputFreq > nyquist) {
+            const foldedFreq = getAliasedFrequency(inputFreq, fsHz);
+            const foldedStr = foldedFreq >= 1000 ? (foldedFreq/1000).toFixed(2)+'kHz' : foldedFreq.toFixed(0)+'Hz';
             ctx.fillStyle = "#ff4444";
-            ctx.fillText(`⚠ エイリアス! fin(${freqStr}) > fs/2(${(nyquist/1000).toFixed(1)}kHz)`, 10, 46);
+            ctx.fillText(`⚠ エイリアス! fin(${freqStr}) > fs/2(${(nyquist/1000).toFixed(1)}kHz) → fout=${foldedStr}`, 10, 46);
         } else {
             ctx.fillStyle = "#88ff88";
             ctx.fillText(`✓ fin < fs/2 (${(nyquist/1000).toFixed(1)}kHz) サンプリング定理OK`, 10, 46);
@@ -3506,6 +3508,17 @@ function makeAdDaTerminalSignal(terminalName) {
     return { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg' };
 }
 
+// サンプリング周波数fsで周波数finをサンプリングした時に実際に観測される
+// 折り返し（エイリアス）後の周波数を計算する。
+// fout = fin を fs の周期で畳み込み、0〜fs/2の範囲に収める。
+function getAliasedFrequency(fin, fs) {
+    if (!fs || fs <= 0) return fin;
+    let f = fin % fs;
+    if (f < 0) f += fs;
+    if (f > fs / 2) f = fs - f;
+    return f;
+}
+
 // AD/DA端子ごとの「実際に表示すべき周波数」を返す（時間軸の自動調整に使用）
 // null を返す場合はその端子の表示周波数からは自動調整しない（DC等）
 function getAdDaTerminalDisplayFrequency(terminalName) {
@@ -3520,7 +3533,15 @@ function getAdDaTerminalDisplayFrequency(terminalName) {
     if (terminalName === 'TB5' || terminalName === 'TP1') {
         // 発振器が結線されていて出力ONの時だけ、その周波数に合わせる
         if (adDaState.tb1Wired === 'fg' && fgState.power && fgState.outputOn && fgState.freq) {
-            return fgState.freq;
+            if (terminalName === 'TB5') {
+                // DA出力は「折り返し後（エイリアス後）の周波数」で表示されるため、
+                // 時間軸もそちらに合わせないと波形のうねりが見えない
+                const aliased = getAliasedFrequency(fgState.freq, fsHz);
+                // fin=n*fsぴったりの時(aliased=0)は直流化するので、
+                // 時間軸だけは極端に広がりすぎないよう最低値を設ける
+                return aliased > 0 ? aliased : Math.max(1, fsHz / 100);
+            }
+            return fgState.freq; // TP1（原波形）はそのままの周波数
         }
         return null; // DC入力時や未結線時は自動調整しない
     }
@@ -3528,7 +3549,7 @@ function getAdDaTerminalDisplayFrequency(terminalName) {
 }
 
 function updateAdDaTerminalSignals() {
-    let maxDisplayFreq = 0;
+    let minDisplayFreq = Infinity;
 
     // AD/DA端子に接続されているオシロチャンネルを特定する
     const addaConns = wiringState.connections.filter(c => c.type === 'adda');
@@ -3553,13 +3574,15 @@ function updateAdDaTerminalSignals() {
             scopeState.signals[channel] = makeAdDaTerminalSignal(termName);
 
             const freq = getAdDaTerminalDisplayFrequency(termName);
-            if (freq && freq > maxDisplayFreq) maxDisplayFreq = freq;
+            // 最も遅い信号（＝エイリアス発生時のDA出力側など）を基準に選ぶ。
+            // 最速側を基準にすると、エイリアスで生じるゆっくりしたうねりが
+            // 画面に収まらず見えなくなってしまうため。
+            if (freq && freq > 0 && freq < minDisplayFreq) minDisplayFreq = freq;
         });
 
-    // 接続されているAD/DA端子の中で最も速い信号に合わせて時間軸を自動調整
-    // （TP3/TP5/TP8などはkHzオーダーのため、手動のTime/Divでは追いつかないことがある）
-    if (maxDisplayFreq > 0) {
-        autoAdjustTimeAxis(maxDisplayFreq);
+    // 接続されているAD/DA端子の中で最も遅い信号に合わせて時間軸を自動調整
+    if (minDisplayFreq < Infinity) {
+        autoAdjustTimeAxis(minDisplayFreq);
     }
 
     if (scopeState.isOn) drawWaveform();
