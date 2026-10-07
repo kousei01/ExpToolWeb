@@ -1,109 +1,57 @@
+/* =======================================================================
+   実験器具シミュレータ  style.css
+
+   【目次】
+     1. ページ全体
+     2. コントロールパネル（画面上部）
+     3. 実技テストパネル
+     4. メインステージと機器
+     5. ホットスポット（機器画像の上のボタン）・ツールチップ
+     6. 機器ごとの表示（オシロ画面・直流電源LED・発振器ディスプレイ・AD/DA・状態表示バー）
+     7. 結線（ワイヤー）
+     8. サイドバー（実験器具 / 実験手順）
+     9. 説明書
+   ======================================================================= */
+
+
+/* =======================================================================
+   1. ページ全体
+   ======================================================================= */
+
 body {
-    /* ページ内の要素を縦に並べる */
+    /* コントロールパネル → メインステージ を縦に並べて中央に寄せる */
     display: flex;
     flex-direction: column;
-    
-    /* 横方向の中央揃え */
     align-items: center;
-    
-    /* 余白と背景色の調整 */
+
     margin: 0;
     padding: 20px 0;
-    min-height: 100vh; /* 画面の高さいっぱいを使う */
-    background-color: #eaeff2; /* 薄いグレー（実験室っぽい色） */
-}
-
-.main-stage {
-    width: 100%;
-    height: calc(100vh - 150px); /* 画面の高さいっぱい確保 */
-    
-    /* フレックスボックスではなくブロック表示にする（重要） */
-    display: block; 
-    
-    /* スクロールバーはこの要素に出す */
-    overflow: auto; 
-    
-    /* 余計な余白や中央揃え設定をリセット */
-    text-align: left;
-    position: relative;
-    padding: 0;
+    min-height: 100vh;
+    background-color: #eaeff2;   /* 薄いグレー（実験室っぽい色） */
 }
 
 
-.instrument-container {
-    transform-origin: 0 0; 
-    
-    /* マージンはJSで操作するので0にしておく */
-    margin: 0; 
-    
-    /* 他の設定は以前のままでOK */
-    position: relative;
-    display: inline-block;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
-}
+/* =======================================================================
+   2. コントロールパネル（画面上部）
+   ======================================================================= */
 
-.screen-area {
-    position: absolute;
-    /* 位置は個別に指定するのでここでは書かない */
-}
-
-/* ツールチップの共通設定 */
-.tooltip {
-    display: none;
-    position: absolute;
-    background-color: rgba(0, 0, 0, 0.85);
-    color: white;
-    padding: 8px 12px;
-    border-radius: 4px;
-    font-size: 14px;
-    pointer-events: none;
-    z-index: 1000;
-    max-width: 500px;
-    width: max-content;
-    white-space: pre-wrap;
-}
-
-/* ホットスポット（自動生成されるボタン） */
-.hotspot {
-    position: absolute;
-    z-index: 100;
-    cursor: pointer;
-    background-color: rgba(255, 0, 0, 0.3); /* テスト用：赤色 */
-}
-
-/* --- 個別の位置調整 --- */
-
-/* Hantek用の画面位置 */
-#screen-hantek {
-    top: 283px;    /* 画像に合わせて調整 */
-    left: 85px;
-}
-
-/* Agilent用の画面位置 */
-#screen-agilent {
-    top: 167px;    /* 画像に合わせて調整 */
-    left: 193px;
-}
-
-/* --- コントロールパネル全体 --- */
 .control-panel {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 20px;
-    
-    background-color: #2c3e50; /* 濃いネイビーグレー */
+
+    width: max-content;   /* 中身に合わせた幅 */
+    margin: 20px auto;
     padding: 15px 25px;
     border-radius: 12px;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2); /* 影をつけて浮き上がらせる */
+    background-color: #2c3e50;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     color: white;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    
-    margin: 20px auto;
-    width: max-content; /* 中身に合わせて幅を調整 */
 }
 
-/* 各グループのまとまり */
+/* ラベル＋ボタンのまとまり */
 .control-group {
     display: flex;
     flex-direction: column;
@@ -111,100 +59,104 @@ body {
     gap: 5px;
 }
 
-/* ラベル文字 (MODEL SELECT など) */
+/* まとまりの見出し（MODEL SELECT など） */
 .panel-label {
     font-size: 10px;
+    font-weight: bold;
     letter-spacing: 1px;
-    color: #95a5a6; /* 薄いグレー */
-    font-weight: bold;
+    color: #95a5a6;
 }
 
-/* --- ボタンのデザイン --- */
-.panel-btn {
-    background-color: #34495e;
-    color: white;
-    border: 1px solid #46637f;
-    padding: 8px 16px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 14px;
-    transition: all 0.2s ease;
-}
-
-/* ボタンにマウスが乗った時 */
-.panel-btn:hover {
-    background-color: #415b76;
-    transform: translateY(-1px); /* 少し浮く */
-}
-
-/* ボタンが押されている時 (Active状態) */
-.panel-btn:active {
-    transform: translateY(1px); /* 沈む */
-}
-
-/* 選択中のモデルボタンを目立たせる */
-.panel-btn.active {
-    background-color: #3498db; /* 鮮やかな青 */
-    border-color: #3498db;
-    font-weight: bold;
-    box-shadow: 0 0 10px rgba(52, 152, 219, 0.4); /* 青く光る */
-}
-
-/* + - ボタンを少し大きく */
-.icon-btn {
-    width: 36px;
-    height: 36px;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-    font-size: 18px;
-}
-
-/* --- ズーム表示画面 (デジタル液晶風) --- */
-.zoom-display-screen {
-    background-color: #000;
-    padding: 8px 12px;
-    border-radius: 4px;
-    border: 1px solid #555;
-    min-width: 60px;
-    text-align: center;
-    box-shadow: inset 0 0 5px rgba(0,0,0,0.8); /* 内側に影 */
-}
-
-#zoom-display {
-    color: #2ecc71; /* 蛍光グリーン */
-    font-family: 'Courier New', monospace; /* 等幅フォント */
-    font-weight: bold;
-    font-size: 16px;
-}
-
-/* --- 区切り線 --- */
+/* まとまり同士の区切り線 */
 .panel-divider {
     width: 1px;
     height: 40px;
-    background-color: #46637f;
     margin: 0 10px;
+    background-color: #46637f;
 }
 
-/* --- レイアウト調整 --- */
-.button-group, .zoom-controls {
+.button-group,
+.zoom-controls {
     display: flex;
-    gap: 8px;
     align-items: center;
+    gap: 8px;
 }
 
-/* --- テストパネルのスタイル --- */
+/* --- ボタン --- */
+
+.panel-btn {
+    padding: 8px 16px;
+    border: 1px solid #46637f;
+    border-radius: 6px;
+    background-color: #34495e;
+    color: white;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.panel-btn:hover {
+    background-color: #415b76;
+    transform: translateY(-1px);   /* 少し浮く */
+}
+
+.panel-btn:active {
+    transform: translateY(1px);    /* 押すと沈む */
+}
+
+/* 選択中のボタン（JSが active クラスを付け外しする） */
+.panel-btn.active {
+    border-color: #3498db;
+    background-color: #3498db;
+    box-shadow: 0 0 10px rgba(52, 152, 219, 0.4);
+    font-weight: bold;
+}
+
+/* ズームの ＋ / − ボタン */
+.icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+/* --- ズーム倍率の表示（デジタル液晶風） --- */
+
+.zoom-display-screen {
+    min-width: 60px;
+    padding: 8px 12px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background-color: #000;
+    box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.8);
+    text-align: center;
+}
+
+#zoom-display {
+    color: #2ecc71;
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+
+/* =======================================================================
+   3. 実技テストパネル
+   ======================================================================= */
+
 .test-panel {
-    background-color: #fff;
-    border: 3px solid #e74c3c; /* 赤枠で緊張感を出す */
-    border-radius: 8px;
     width: 90%;
     max-width: 600px;
     margin: 10px auto;
     padding: 20px;
-    box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    border: 3px solid #e74c3c;
+    border-radius: 8px;
+    background-color: #fff;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
     font-family: sans-serif;
     text-align: center;
 }
@@ -215,16 +167,17 @@ body {
 }
 
 #question-text {
-    font-size: 18px;
-    font-weight: bold;
     margin-bottom: 20px;
     color: #333;
+    font-size: 18px;
+    font-weight: bold;
 }
 
+/* 正解・不正解のメッセージ（JSが feedback-correct / feedback-wrong を付ける） */
 #test-feedback {
-    font-weight: bold;
-    margin-bottom: 15px;
     min-height: 24px;
+    margin-bottom: 15px;
+    font-weight: bold;
 }
 
 .feedback-correct {
@@ -236,32 +189,451 @@ body {
     color: #e74c3c;
 }
 
-/* --- 説明書画面のスタイル --- */
+
+/* =======================================================================
+   4. メインステージと機器
+   ======================================================================= */
+
+/* 機器を並べる作業スペース（はみ出した分はここでスクロールする） */
+.main-stage {
+    position: relative;
+    display: block;
+    width: 100%;
+    height: calc(100vh - 150px);
+    padding: 0;
+    overflow: auto;
+    text-align: left;
+}
+
+/* 機器1台分の外枠。ドラッグで動かす単位で、left / top / 大きさはJSが設定する */
+.draggable-equipment {
+    position: absolute;
+    z-index: 10;
+    width: fit-content;
+    height: fit-content;
+    overflow: hidden;
+    cursor: default;
+}
+
+/* 機器の本体（画像＋その上のボタン類）。ズームはJSがここに transform: scale() を掛ける */
+.instrument-container {
+    position: relative;
+    display: inline-block;
+    margin: 0;
+    transform-origin: 0 0;   /* 左上を基準に拡大縮小する */
+}
+
+.instrument-container img {
+    display: block;          /* 画像の下にできる数pxの隙間を消す */
+    margin: 0;
+    padding: 0;
+    pointer-events: none;    /* クリックは上に重ねたホットスポットで受ける */
+}
+
+
+/* =======================================================================
+   5. ホットスポット（機器画像の上のボタン）・ツールチップ
+   ======================================================================= */
+
+/* JSが <area> の座標から自動生成する。位置と大きさはJSが設定する */
+.hotspot {
+    position: absolute;
+    z-index: 100;
+    cursor: pointer;
+}
+
+/* 機能を実装済みのボタン = 青 */
+.hotspot.implemented {
+    border: 2px solid rgba(0, 100, 255, 0.6);
+    background-color: rgba(0, 100, 255, 0.3);
+}
+
+/* 未実装のボタン = 赤 */
+.hotspot.unimplemented {
+    border: 1px dashed rgba(255, 0, 0, 0.6);
+    background-color: rgba(255, 0, 0, 0.3);
+}
+
+/* ボタンの説明。マウスに追従する位置はJSが設定する */
+.tooltip {
+    display: none;
+    position: absolute;
+    z-index: 1000;
+    width: max-content;
+    max-width: 500px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    background-color: rgba(0, 0, 0, 0.85);
+    color: white;
+    font-size: 14px;
+    white-space: pre-wrap;
+    pointer-events: none;
+}
+
+
+/* =======================================================================
+   6. 機器ごとの表示
+   ※ 位置(top / left)は機器の画像に合わせた値。画像を差し替えたら調整すること
+   ======================================================================= */
+
+/* --- オシロスコープ: 波形を描く画面(canvas)の位置 --- */
+
+.screen-area {
+    position: absolute;
+}
+
+#screen-hantek {
+    top: 283px;
+    left: 85px;
+}
+
+#screen-agilent {
+    top: 167px;
+    left: 193px;
+}
+
+/* --- 直流電源: 電圧・電流のLED表示 --- */
+
+.ps-led-display {
+    position: absolute;
+    z-index: 20;             /* 画像より手前 */
+    width: 70px;
+    color: #ff3333;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 24px;
+    font-weight: bold;
+    text-align: right;
+    text-shadow: 0 0 4px #ff0000;   /* ほんのり光らせる */
+    pointer-events: none;
+}
+
+#disp-ch1-v { top: 170px; left: 500px; }
+#disp-ch1-a { top: 305px; left: 500px; }
+#disp-ch2-v { top: 170px; left: 230px; }
+#disp-ch2-a { top: 305px; left: 230px; }
+
+/* --- 発振器: ディスプレイ（電源OFFの間は非表示） --- */
+
+#fg-display {
+    display: none;
+    position: absolute;
+    top: 130px;
+    left: 120px;
+    width: 250px;
+    height: 140px;
+    box-sizing: border-box;
+    padding: 6px 10px;
+    border: 2px inset #555;
+    background-color: #2e3b32;
+    color: #4CAF50;
+    font-family: 'Courier New', monospace;
+    font-size: 19px;
+    font-weight: bold;
+    line-height: 1.3;
+    letter-spacing: 0.5px;
+    pointer-events: none;
+}
+
+/* 電源ON（JSが fg-display-on クラスを付ける） */
+#fg-display.fg-display-on {
+    display: block;
+}
+
+/* --- AD/DA変換機: サンプリング周期切換（見えないクリック領域） --- */
+
+#adda-sampling-hotspot {
+    position: absolute;
+    top: 575px;
+    left: 580px;
+    width: 118px;
+    height: 58px;
+    cursor: pointer;
+}
+
+
+/* --- 状態表示バー（直流電源・AD/DA変換機の画像の下に付く） ---
+   機器の現在の設定を文字で示す。機器本体と一緒に拡大縮小・移動する。
+   高さ(height)はJSが読み取って外枠の高さに足すので、px で指定すること */
+
+.status-strip {
+    position: absolute;
+    top: 100%;               /* 画像のすぐ下 */
+    left: 0;
+    right: 0;
+    height: 110px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 30px;
+    padding: 0 24px;
+    overflow: hidden;
+    background-color: #1c2833;
+    color: #ecf0f1;
+    font-family: 'Segoe UI', "Hiragino Sans", Meiryo, sans-serif;
+    white-space: nowrap;
+}
+
+/* 項目1つ分（上に項目名、下に値） */
+.status-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.status-label {
+    color: #95a5a6;
+    font-size: 18px;
+}
+
+.status-value {
+    font-family: 'Courier New', monospace;
+    font-size: 26px;
+    font-weight: bold;
+}
+
+/* 強調する値（OUTPUT が ON、FINE モード中）。JSが is-on クラスを付ける */
+.status-value.is-on {
+    color: #2ecc71;
+}
+
+/* デジタルコードのLED。丸いランプの下にビット名（D7〜D0）を表示する */
+.led-row {
+    display: flex;
+    gap: 8px;
+}
+
+.led {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    color: #95a5a6;
+    font-size: 13px;
+}
+
+.led::before {
+    content: '';
+    width: 26px;
+    height: 26px;
+    border: 2px solid #111;
+    border-radius: 50%;
+    background-color: #4a1c1c;   /* 消灯 */
+}
+
+/* 点灯（ビット = 1） */
+.led.on::before {
+    background-color: #ff3b30;
+    box-shadow: 0 0 12px #ff3b30;
+}
+
+/* 薄く点灯（コードが高速に変化している） */
+.led.dim::before {
+    background-color: #a8322b;
+    box-shadow: 0 0 5px #a8322b;
+}
+
+/* 使っていないLED（4bit のときの下位4個） */
+.led.unused {
+    opacity: 0.25;
+}
+
+
+/* =======================================================================
+   7. 結線（ワイヤー）
+   ======================================================================= */
+
+/* ワイヤーを描くSVG。画面全体に重ね、クリックは下の要素へ通す */
+#wire-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 500;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+}
+
+/* 接続先を待っている端子（1本目に選んだ端子） */
+.hotspot.wire-selected {
+    z-index: 200;
+    box-shadow: 0 0 0 4px #fff, 0 0 0 7px gold;
+}
+
+/* 線が繋がっている端子 */
+.hotspot.wire-connected {
+    border-color: rgba(0, 255, 100, 0.9);
+    background-color: rgba(0, 200, 80, 0.25);
+}
+
+/* 選択中の端子を囲む輪の点滅 */
+@keyframes wirePulse {
+    from { opacity: 1;   r: 10; }
+    to   { opacity: 0.4; r: 14; }
+}
+
+/* 画面下端のメッセージ。JSが opacity を切り替えて表示 / 非表示にする */
+#wire-status-bar {
+    position: fixed;
+    bottom: 10px;
+    left: 50%;
+    z-index: 9999;
+    transform: translateX(-50%);
+    padding: 8px 20px;
+    border-radius: 20px;
+    background: rgba(0, 0, 0, 0.82);
+    color: #fff;
+    font-family: sans-serif;
+    font-size: 14px;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.4s;
+    pointer-events: none;
+}
+
+
+/* =======================================================================
+   8. サイドバー（右: 実験器具 / 左: 実験手順）
+   ======================================================================= */
+
+/* 共通: ふだんは画面外に隠れていて、open クラスが付くとスライドして出てくる */
+.equipment-sidebar,
+.experiment-sidebar {
+    position: fixed;
+    top: 50px;
+    z-index: 1000;
+    width: 250px;
+    height: 100%;
+    background-color: #f8f9fa;
+}
+
+.equipment-sidebar {
+    right: -250px;
+    box-shadow: -2px 0 10px rgba(0, 0, 0, 0.2);
+    transition: right 0.3s ease;
+}
+
+.equipment-sidebar.open {
+    right: 0;
+}
+
+.experiment-sidebar {
+    left: -250px;
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.2);
+    transition: left 0.3s ease;
+}
+
+.experiment-sidebar.open {
+    left: 0;
+}
+
+/* 画面の端に飛び出している、開閉用のタブ（縦書き） */
+.sidebar-tab {
+    position: absolute;
+    top: 20px;
+    left: -45px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 45px;
+    height: 120px;
+    border-radius: 8px 0 0 8px;
+    background-color: #34495e;
+    color: #fff;
+    font-weight: bold;
+    letter-spacing: 2px;
+    text-align: center;
+    writing-mode: vertical-rl;
+    cursor: pointer;
+}
+
+/* 左サイドバーのタブは反対側（右）に飛び出す。色も変えて区別する */
+.experiment-tab {
+    right: -45px;
+    left: auto;
+    border-radius: 0 8px 8px 0;
+    background-color: #27ae60;
+}
+
+.sidebar-content {
+    padding: 20px;
+}
+
+/* サイドバー内の項目リスト */
+.equipment-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.equipment-list li {
+    margin-bottom: 5px;
+    padding: 15px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: #fff;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.equipment-list li:hover {
+    border-color: #2980b9;
+    background-color: #e3f2fd;
+}
+
+/* 実験手順の項目は2行なので、行間を少し広げる */
+.experiment-sidebar .equipment-list li {
+    padding: 12px 10px;
+    line-height: 1.5;
+}
+
+
+/* =======================================================================
+   9. 説明書
+   ======================================================================= */
+
+/* ふだんは非表示。説明書を開くと、JSが body に manual-open クラスを付ける */
 .manual-container {
+    display: none;
+    justify-content: center;
     width: 100%;
     min-height: 100%;
-    display: flex;
-    justify-content: center;
     padding-top: 20px;
     padding-bottom: 50px;
 }
 
+body.manual-open .manual-container {
+    display: flex;
+}
+
+/* 説明書を開いている間は、機器とワイヤーを隠す。
+   機器の表示 / 非表示はJSが style 属性で切り替えているので、それより優先させるために
+   !important を付けている（style 属性は書き換えないので、閉じれば元の状態に戻る） */
+body.manual-open .draggable-equipment {
+    display: none !important;
+}
+
+body.manual-open #wire-overlay {
+    display: none;
+}
+
+/* 紙のように見せる本文エリア */
 .manual-paper {
-    background-color: #fff;
     width: 800px;
     max-width: 90%;
     padding: 40px;
-    box-shadow: 0 0 20px rgba(0,0,0,0.1);
     border-radius: 4px;
+    background-color: #fff;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
     color: #333;
     font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
     line-height: 1.6;
 }
 
 .manual-paper h2 {
-    border-bottom: 2px solid #2c3e50;
-    padding-bottom: 10px;
     margin-bottom: 30px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #2c3e50;
     color: #2c3e50;
     text-align: center;
 }
@@ -271,264 +643,26 @@ body {
 }
 
 .manual-section h3 {
-    background-color: #f0f4f8;
+    margin-bottom: 15px;
     padding: 8px 12px;
     border-left: 5px solid #3498db;
+    background-color: #f0f4f8;
     color: #2c3e50;
-    margin-bottom: 15px;
 }
 
 .manual-paper ul {
-    list-style-type: disc;
     padding-left: 20px;
+    list-style-type: disc;
 }
 
 .manual-paper li {
     margin-bottom: 10px;
 }
 
+/* 本文中の強調（黄色マーカー） */
 .highlight {
-    background-color: #fff3cd;
-    font-weight: bold;
     padding: 2px 5px;
     border-radius: 3px;
-}
-
-/* --- 実験器具サイドバーのスタイル --- */
-.equipment-sidebar {
-    position: fixed;
-    top: 50px;       /* 上からの位置 */
-    right: -250px;   /* 初期状態は画面外（右に隠す） */
-    width: 250px;
-    height: 100%;
-    background-color: #f8f9fa;
-    box-shadow: -2px 0 10px rgba(0,0,0,0.2);
-    transition: right 0.3s ease; /* スライドアニメーション */
-    z-index: 1000;
-}
-
-/* メニューが開いた時の状態（JSでこのクラスを付与する） */
-.equipment-sidebar.open {
-    right: 0;
-}
-
-/* 画面端に飛び出しているタブ */
-.sidebar-tab {
-    position: absolute;
-    left: -45px;
-    top: 20px;
-    width: 45px;
-    height: 120px;
-    background-color: #34495e;
-    color: #fff;
+    background-color: #fff3cd;
     font-weight: bold;
-    cursor: pointer;
-    border-radius: 8px 0 0 8px;
-    /* 縦書きにする設定 */
-    writing-mode: vertical-rl;
-    text-align: center;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    letter-spacing: 2px;
-}
-
-/* リストのデザイン */
-.sidebar-content {
-    padding: 20px;
-}
-
-.equipment-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-
-.equipment-list li {
-    padding: 15px 10px;
-    margin-bottom: 5px;
-    background-color: #fff;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: bold;
-    transition: background 0.2s;
-}
-
-.equipment-list li:hover {
-    background-color: #e3f2fd; /* マウスオーバーで薄い青色 */
-    border-color: #2980b9;
-}
-
-/* style.css の末尾に追加 */
-
-/* 全体の作業スペース */
-#lab-workspace {
-    position: relative;
-    width: 100%;
-    height: 100vh; /* 画面全体を作業スペースに */
-    overflow: hidden;
-}
-
-/* 器具共通のドラッグ用コンテナ */
-.draggable-equipment {
-    position: absolute;
-    z-index: 10;
-    background: white;
-    /* border を削除 */
-    border-radius: 8px 8px 0 0;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-    overflow: hidden;
-    cursor: default;
-}
-
-/* ドラッグ用の持ち手（ヘッダー） */
-.equipment-header {
-    padding: 8px 15px;
-    background-color: #34495e;
-    color: white;
-    font-weight: bold;
-    cursor: move; /* 掴めるようなカーソルにする */
-    user-select: none; /* テキスト選択を防ぐ */
-}
-
-/* --- ドラッグ枠の余白を強制的に消去する設定 --- */
-
-/* 1. 外枠を中身（画像）のサイズに完全に合わせる */
-.draggable-equipment {
-    width: fit-content !important;
-    height: fit-content !important;
-    background: transparent !important;
-    border: none !important;        /* ← これを追加 */
-    box-shadow: none !important;    /* 影も消したい場合はこちらも */
-    border-radius: 0 !important;
-}
-
-/* 2. 中のコンテナの「画面いっぱいに広がる設定」を全て強制リセット */
-.draggable-equipment .main-stage,
-.draggable-equipment .instrument-container {
-    width: auto !important;
-    height: auto !important;
-    min-width: 0 !important;   /* ← これが余白の最大の原因になりやすいです */
-    min-height: 0 !important;  /* ← 画面高さ(100vh)などを無効化します */
-    margin: 0 !important;
-    padding: 0 !important;
-    border: none !important;
-}
-
-/* 3. 画像の下にできる謎の数ピクセルの隙間を消す */
-.draggable-equipment img {
-    display: block !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    pointer-events: none; /* ← この1行を追加 */
-}
-
-/* デジタル数字の共通設定 */
-.ps-led-display {
-    position: absolute;
-    color: #ff3333; /* 実機に近い赤色LED */
-    font-family: 'Courier New', Courier, monospace; /* デジタル風フォント */
-    font-size: 24px; /* 文字の大きさ（画像に合わせて調整） */
-    font-weight: bold;
-    text-align: right; /* 右揃え */
-    width: 70px; /* 窓の幅（画像に合わせて調整） */
-    z-index: 20; /* ★重要：画像より手前に出す */
-    pointer-events: none; /* クリックを背後に貫通させる */
-    text-shadow: 0 0 4px #ff0000; /* ほんのり光らせる */
-}
-
-/* ★ 4つの窓それぞれの位置（仮の数値です） */
-/* ブラウザのF12ツールを使って、画像の黒い窓にピッタリ合うように微調整してください */
-#disp-ch1-v { top: 170px; left: 500px; }
-#disp-ch1-a { top: 305px; left: 500px; }
-#disp-ch2-v { top: 170px; left: 230px; }
-#disp-ch2-a { top: 305px; left: 230px; }
-
-/* 発振器のディスプレイ設定 */
-#fg-display {
-    position: absolute;
-    top: 130px;  
-    left: 120px; 
-    width: 250px;
-    height: 140px;
-    background-color: #2e3b32;
-    color: #4CAF50;
-    font-family: 'Courier New', monospace;
-    padding: 6px 10px;
-    box-sizing: border-box;
-    font-size: 19px;       /* 14px → 19px に拡大 */
-    line-height: 1.3;      /* 行間を詰めて枠内に収める */
-    font-weight: bold;     /* 視認性アップ */
-    letter-spacing: 0.5px;
-    border: 2px inset #555;
-    display: none; 
-    pointer-events: none; /* ★これを追加（クリックを貫通させる） */
-}
-
-/* 電源ON時のクラス */
-.fg-display-on {
-    display: block !important;
-}
-
-/* AD/DA converter photo UI */
-#adda-photo-ui {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-}
-
-.adda-invisible-hotspot {
-    position: absolute;
-    left: 580px;
-    top: 575px;
-    width: 118px;
-    height: 58px;
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    pointer-events: auto;
-}
-
-/* --- 実験番号サイドバー（左側）--- */
-.experiment-sidebar {
-    position: fixed;
-    top: 50px;
-    left: -250px;   /* 初期状態は画面外（左に隠す） */
-    width: 250px;
-    height: 100%;
-    background-color: #f8f9fa;
-    box-shadow: 2px 0 10px rgba(0,0,0,0.2);
-    transition: left 0.3s ease;
-    z-index: 1000;
-}
-
-.experiment-sidebar.open {
-    left: 0;
-}
-
-.experiment-tab {
-    position: absolute;
-    right: -45px;   /* 右側に飛び出す（右サイドバーとは逆） */
-    left: auto;
-    top: 20px;
-    width: 45px;
-    height: 120px;
-    background-color: #27ae60; /* 緑色で右サイドバーと区別 */
-    color: #fff;
-    font-weight: bold;
-    cursor: pointer;
-    border-radius: 0 8px 8px 0;
-    writing-mode: vertical-rl;
-    text-align: center;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    letter-spacing: 2px;
-}
-
-/* 実験手順リストの行を少し縦に広く */
-.experiment-sidebar .equipment-list li {
-    line-height: 1.5;
-    padding: 12px 10px;
 }

@@ -1,106 +1,278 @@
 // =======================================================================
-//  script.js (メニュー・ズーム・ツマミ操作 完全統合版)
+//  実験器具シミュレータ  script.js
+//
+//  オシロスコープ・直流電源・発振器・AD/DA変換機(ITF-203B) を画面上で操作し、
+//  端子同士を結線して波形を観察する学習用シミュレータ。
+//
+//  【目次】
+//     1. 定数
+//     2. 状態（各機器の現在の設定値）
+//     3. 表示用データ（メニュー・ツールチップ・実験手順の文言）
+//     4. 画面レイアウト（機種切替・説明書・ズーム・サイズ調整・ドラッグ・サイドバー）
+//     5. 信号の計算（ある時刻の電圧を求める）
+//     6. オシロスコープの描画
+//     7. 直流電源
+//     8. 発振器
+//     9. AD/DA変換機
+//    10. 結線（ワイヤー）
+//    11. 結線 → オシロに映す信号への反映
+//    12. ホットスポット（機器画像の上のボタン）
+//    13. 実技テストモード
+//    14. 起動処理
+//
+//  【処理の流れ】
+//    機器を操作する / 結線を変える
+//      → 11章の関数が scopeState.signals[CH] を作り直す
+//      → 6章の drawWaveform() が毎フレーム signals を読んで波形を描く
 // =======================================================================
 
-// --- 1. グローバル変数と初期設定 ---
 
-let currentModelId = 'agilent';
-let canvas = document.querySelector('#canvas-agilent') || document.createElement('canvas');
-let ctx = canvas.getContext('2d');
-let tooltip = document.querySelector('#tooltip-agilent') || document.createElement('div');
+// =======================================================================
+//  1. 定数
+// =======================================================================
 
-// モデルごとに使用可能なチャンネル一覧
-// Hantekは2ch機、Agilent(MSOX2004A)はCh3端子があるため3ch分表示に対応
+// --- オシロスコープ ---
+
+// 機種ごとに表示できるチャンネル（Hantekは2ch機、AgilentはCh3端子まで対応）
 const MODEL_CHANNELS = {
-    hantek: ['CH1', 'CH2'],
-    agilent: ['CH1', 'CH2', 'CH3']
+    hantek:  ['CH1', 'CH2'],
+    agilent: ['CH1', 'CH2', 'CH3'],
 };
+const ALL_CHANNELS = ['CH1', 'CH2', 'CH3'];
 
-// ステップ（刻み）の定義 (1, 2, 5 の法則)
-const VOLT_STEPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0];
-const TIME_STEPS = [
-    0.000001, 0.000002, 0.000005,   // 1us, 2us, 5us  (AD/DA内部クロック等の高速信号用)
-    0.00001, 0.00002, 0.00005,      // 10us, 20us, 50us
-    0.0001, 0.0002, 0.0005,         // 100us, 200us, 500us
-    0.001, 0.002, 0.005,            // 1ms, 2ms, 5ms  (従来の最小値はここから)
-    0.01, 0.02, 0.05,
-    0.1, 0.2, 0.5,
-    1.0
+// チャンネルごとの波形の色と入力カップリング
+const CHANNEL_COLORS   = { CH1: 'yellow', CH2: 'cyan', CH3: '#ff66ff' };
+const CHANNEL_COUPLING = { CH1: 'DC',     CH2: 'AC',   CH3: 'DC' };
+
+// ツマミで切り替わるレンジ（1-2-5 ステップ）
+const VOLT_STEPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0];   // [V/div]
+const TIME_STEPS = [                                                         // [s/div]
+    0.000001, 0.000002, 0.000005,   // 1us, 2us, 5us（AD/DA内部クロックなど高速信号用）
+    0.00001,  0.00002,  0.00005,    // 10us, 20us, 50us
+    0.0001,   0.0002,   0.0005,     // 100us, 200us, 500us
+    0.001,    0.002,    0.005,      // 1ms, 2ms, 5ms
+    0.01,     0.02,     0.05,
+    0.1,      0.2,      0.5,
+    1.0,
 ];
 
-// オシロスコープの状態管理
-const scopeState = {
-    isOn: false,      // 電源の状態
-    isRunning: true,  // 波形の動き
-    activeChannel: 'CH1',
-    inputSource: 'internal', // 入力信号のソース ('internal' または 'power_supply')
-    
-    voltIndexCH1: 6,     // CH1の電圧 (初期値 1V)
-    voltIndexCH2: 6,     // CH2の電圧 (初期値 1V)
-    voltIndexCH3: 6,     // CH3の電圧 (初期値 1V) ※AD変換過程観察(TP5)用
-    timeIndex: 15,    // 初期値: TIME_STEPS[15] = 0.1s (=100ms)
-    
-    timeOffset: 0,    // 波形アニメーション用
-    currentMenu: null, // 表示中のメニュー
-    showMeasure: false, // 自動計測表示のON/OFF
+// 画面の1目盛り(1div)のピクセル数
+const PIXELS_PER_DIV = 50;
 
-    positionCH1: 0, // CH1の上下位置オフセット（初期値0）
-    positionCH2: 0, // CH2の上下位置オフセット（初期値0）
-    positionCH3: 0, // CH3の上下位置オフセット（初期値0）
+// 「内部テスト信号」モードで各チャンネルに表示する信号
+const INTERNAL_TEST_SIGNALS = {
+    CH1: { type: 'sine', amplitude: 2.0, frequency: 50 },
+    CH2: { type: 'sine', amplitude: 2.0, frequency: 50 },
+    CH3: { type: 'flat', amplitude: 0, frequency: 1, offset: 0 },
+};
+
+// --- 結線 ---
+
+// 機器（側）ごとの端子名。端子名は index.html の <area> の title / alt と対応する
+const TERMINALS = {
+    ps:   ['ch1pura', 'ch1mai', 'ch2pura', 'ch2mai', 'grd'],
+    osc:  ['Ch1', 'Ch2', 'Ch3'],
+    fg:   ['fctnout', 'subout'],
+    adda: ['TB1', 'TB2', 'TB3', 'TB4', 'TB5', 'TB6',
+           'TP1', 'TP2', 'TP3', 'TP5', 'TP6', 'TP7', 'TP8', 'TP9', 'TP10', 'TP11', 'TP12'],
+};
+
+// メッセージに使う機器名
+const SIDE_NAMES = { ps: '直流電源', osc: 'オシロスコープ', fg: '発振器', adda: 'AD/DA変換機' };
+
+// 端子ごとのワイヤーの色
+const TERMINAL_COLORS = {
+    // 直流電源
+    ch1pura: '#ff4444',   // 赤（+）
+    ch2pura: '#ff8800',   // オレンジ（+）
+    ch1mai:  '#222222',   // 黒（−）
+    ch2mai:  '#222222',   // 黒（−）
+    grd:     '#007700',   // 緑（GND）
+    // オシロスコープ
+    Ch1:     '#ffff00',   // 黄
+    Ch2:     '#00ffff',   // 水色
+    Ch3:     '#ff66ff',   // マゼンタ
+    // 発振器
+    fctnout: '#ff6600',   // オレンジ（メイン出力）
+    subout:  '#cc44ff',   // 紫（サブ出力）
+    // AD/DA変換機
+    TB1:     '#27ae60',   // 緑（信号入力 +）
+    TB2:     '#7f8c8d',   // グレー（信号入力 −/GND）
+    TB5:     '#e74c3c',
+    TB6:     '#222222',
+    TP1:     '#3498db',
+    TP2:     '#222222',
+    TP3:     '#f1c40f',
+    TP5:     '#9b59b6',
+    TP8:     '#1abc9c',
+};
+
+// --- ホットスポット ---
+
+// 機能を実装済みのボタン（青で表示。ここに無いものは未実装として赤で表示する）
+// ※ AD/DA変換機の端子・スイッチと、メニューを持つボタンは自動的に実装済み扱いになる
+const IMPLEMENTED_BUTTONS = new Set([
+    // オシロスコープ
+    '電源ボタン', 'RunStop', 'AutoSet', 'Meas', 'Cursr', 'Cursrツマミ',
+    'CH1_MENU', 'CH2_MENU', 'CH3_MENU', 'Ch1', 'Ch2', 'Ch3', 'Ch4',
+    'KNOB_TIME', 'KNOB_VOLT', 'Volt1', 'Volt2', 'Volt3', 'Volt4',
+    'Pos1', 'Pos2', 'Level',
+    // 直流電源
+    'ps_power', 'ch1btn', 'ch2btn', 'volt', 'curr', 'output',
+    'ch1pura', 'ch1mai', 'ch2pura', 'ch2mai', 'grd',
+    // 発振器
+    'latorpowar', 'fctn', 'freq', 'amptd', 'offset',
+    'seven', 'eight', 'nine', 'fore', 'five', 'six',
+    'one', 'two', 'three', 'zero', 'dot', 'puramai',
+    'enter', 'cansel', 'undo', 'out', 'fctnout', 'subout',
+]);
+
+// <map name="..."> と、ホットスポットを置く機器コンテナ(id)の対応
+const MAP_TO_CONTAINER = {
+    'map-hantek':  'model-hantek',
+    'map-agilent': 'model-agilent',
+    'map-ps':      'model-ps',
+    'fg-map':      'model-fg',
+    'adda-map':    'model-adda',
+};
+
+
+// =======================================================================
+//  2. 状態（各機器の現在の設定値）
+// =======================================================================
+
+// --- オシロスコープ ---
+const scopeState = {
+    isOn: false,              // 電源
+    isRunning: true,          // RUN / STOP
+    activeChannel: 'CH1',     // 操作対象のチャンネル
+
+    // 入力の種類
+    //   'internal'     : 内部テスト信号（結線なしでテスト波形を表示）
+    //   'power_supply' : 直流電源を直結
+    //   'fg'           : 発振器 または AD/DA変換機を結線
+    inputSource: 'internal',
+
+    voltIndexCH1: 6,          // VOLT_STEPS の添字（初期値 1V/div）
+    voltIndexCH2: 6,
+    voltIndexCH3: 6,
+    timeIndex: 15,            // TIME_STEPS の添字（初期値 0.1s/div）
+    timeOffset: 0,            // 波形を流すための時刻（RUN中は毎フレーム進む）
+
+    positionCH1: 0,           // 波形の上下位置 [px]
+    positionCH2: 0,
+    positionCH3: 0,
+
+    currentMenu: null,        // 表示中のメニュー（MENU_DATA のキー）
+    showMeasure: false,       // 自動計測（Vp-p・周波数）の表示
 
     cursor: {
-        show: false,       // カーソルのON/OFF
-        type: 'time',      // 'time'(縦線) または 'volt'(横線)
-        posA: 150,         // カーソルAのCanvas上のX座標(初期値)
-        posB: 350,         // カーソルBのCanvas上のX座標(初期値)
-        target: 'A'    // ★現在ツマミで動かせる対象（'A' または 'B'）
+        show: false,
+        posA: 150,            // 時間カーソルAのX座標 [px]
+        posB: 350,            // 時間カーソルBのX座標 [px]
+        offsetY1: 100,        // 電圧カーソルY1の位置 [px]（画面中央から上向きを正）
+        offsetY2: -100,       // 電圧カーソルY2の位置 [px]
+        target: 'A',          // ツマミ・画面クリックで動かす対象 ('A' | 'B' | 'Y1' | 'Y2')
     },
 
     trigger: {
-        level: 4.0,       // トリガーレベル (V)
-        slope: 'rising',  // 立ち上がり ('rising') か 立下り ('falling')
-        source: 'CH1',    // トリガーソース
-        isTriggered: false, // トリガーがかかっているかどうかのフラグ
-
-        lastOffset: 0,   // 最後にトリガが成功したときの位置
-        lossTimer: 0     // トリガを見失ってからの経過フレーム数
+        level: 4.0,           // トリガレベル [V]
+        slope: 'rising',      // 立ち上がりエッジ
+        source: 'CH1',        // トリガソース
+        isTriggered: false,   // トリガがかかっているか（描画のたびに更新）
     },
 
-
+    // 各チャンネルに入力されている信号
+    //   type      : 'sine' | 'square' | 'tri' | 'flat'
+    //               'sequence' … AD変換の過程で出る、一定周期で繰り返す階段状の信号（ビット列など）。
+    //                            levels に1周期分の電圧の並び、tsSec に周期 [s] を持つ
+    //   amplitude : 振幅 [V]（片側）   frequency : 周波数 [Hz]   offset : オフセット [V]
+    //   source    : 信号の出どころ
+    //                 なし      … 内部テスト信号
+    //                 'fg_wire' … 発振器を直結
+    //                 'fg'      … AD/DA変換機の端子（アナログ波形・ビット列）
+    //                 'adda'    … AD/DA変換機のDA出力（標本化＋量子化して描く。adda に変換条件を持つ）
+    //                 'none'    … 結線なし（0V）
     signals: {
-        'CH1': { type: 'sine', amplitude: 2.0, frequency: 50 }, // 初期値: 正弦波, 2V
-        'CH2': { type: 'sine', amplitude: 2.0, frequency: 50 },  // 初期値: 正弦波, 2V
-        'CH3': { type: 'flat', amplitude: 0, frequency: 1, offset: 0 }, // ★追加: AD変換過程観察(TP5)用
+        CH1: { ...INTERNAL_TEST_SIGNALS.CH1 },
+        CH2: { ...INTERNAL_TEST_SIGNALS.CH2 },
+        CH3: { ...INTERNAL_TEST_SIGNALS.CH3 },
     },
-
-    ad_da: {
-        mode: true,          // AD/DAモードかどうか
-        resolution: 8,       // ビット数 (4 or 8)
-        samplingPeriod: 5,   // サンプリング周期 [µs] (5 ~ 500)
-        inputFreq: 1000      // 入力周波数 [Hz]
-    }
-
 };
 
-
-// ==========================================
-// 直流電源 (GPD-4303S) の状態管理
-// ==========================================
+// --- 直流電源 (GPD-4303S) ---
 const psState = {
-    isOn: false,          // 電源のON/OFF
-    isOutputOn: false,    // OUTPUTボタンのON/OFF
-    activeChannel: 'CH1', // 現在操作中のチャンネル (CH1 or CH2)
-    
-    // 各チャンネルの設定値
+    isOn: false,              // 電源
+    isOutputOn: false,        // OUTPUT ボタン
+    activeChannel: 'CH1',     // ツマミの操作対象 ('CH1' | 'CH2')
+    fineMode: false,          // 電圧ツマミの微調整（FINE）モード。ツマミをクリックで切替
     ch1: { voltage: 0.0, current: 0.00 },
     ch2: { voltage: 0.0, current: 0.00 },
 };
 
+// --- 発振器（ファンクションジェネレータ） ---
+const fgState = {
+    power: false,
+    waveform: 'SINE',         // 'SINE'(正弦波) | 'SQUARE'(方形波) | 'RAMP'(三角波)
+    freq: 1000,               // 周波数 [Hz]
+    amptd: 1.0,               // 振幅 [Vpp]
+    offset: 0.0,              // オフセット [V]
+    outputOn: false,          // OUTPUT ボタン
+    inputMode: '',            // テンキーで入力中の項目 ('FREQ' | 'AMPTD' | 'OFFSET' | '')
+    inputValue: '',           // テンキーで入力中の文字列
+};
+
+// --- AD/DA変換機 (ITF-203B) ---
+const adDaState = {
+    inputSource: 'fg',        // SW1（入力切換）の位置: 'fg' | 'dc'
+    resolution: 8,            // 量子化ビット数 (4 | 8)
+    samplingPeriodUs: 5,      // サンプリング周期 [µs]
+    samplingOptions: [5, 10, 50, 100, 200, 500],   // 切り替えられるサンプリング周期 [µs]
+    FSR: 10.24,               // フルスケールレンジ [V]
+    mode: 'bipolar',          // 'bipolar' | 'unipolar'
+};
+
+// --- 結線 ---
+const wiringState = {
+    // 確定済みの接続。1本につき1要素で、両端の端子名を「側 + Terminal」のキーで持つ
+    //   type: 'ps'      … 直流電源 → オシロ   { psTerminal,   oscTerminal }
+    //         'fg'      … 発振器   → オシロ   { fgTerminal,   oscTerminal }
+    //         'adda'    … AD/DA    → オシロ   { addaTerminal, oscTerminal }
+    //         'ps-adda' … 直流電源 → AD/DA    { psTerminal,   addaTerminal }
+    //         'fg-adda' … 発振器   → AD/DA    { fgTerminal,   addaTerminal }
+    //   color: ワイヤーの色
+    connections: [],
+
+    // 1本目としてクリックされ、接続先を待っている端子 { terminalName, side, color, el }
+    pendingTerminal: null,
+};
+
+// --- 画面表示 ---
+let currentModelId = 'agilent';                          // 表示中のオシロの機種
+let canvas = document.getElementById('canvas-agilent');  // 表示中のオシロの画面
+let ctx = canvas.getContext('2d');
+let currentZoom = 100;                                   // 全体の表示倍率 [%]
+const tooltip = document.getElementById('tooltip');
+
+// SIZE ADJUST で設定した機器ごとの倍率
+const instrumentScales = {
+    'model-agilent': 1.0,
+    'model-hantek': 1.0,
+    'model-adda': 1.0,
+    'model-fg': 1.0,
+    'model-ps': 1.0,
+};
+
+// ドラッグ中の機器（.draggable-equipment）と、ドラッグ開始時の位置
+let dragTarget = null;
+let dragStart = { mouseX: 0, mouseY: 0, left: 0, top: 0 };
 
 
+// =======================================================================
+//  3. 表示用データ（メニュー・ツールチップ・実験手順の文言）
+// =======================================================================
 
-// メニューの内容データ
-// --- ★変更: Hantek用のメニュー定義 (DSO5000/2000系を想定) ---
+// オシロスコープのメニュー項目（Hantek: DSO5000/2000系を想定）
 const menuDataHantek = {
     "CH1_MENU": {
         title: "CH1", // HantekはシンプルにCH1と出る
@@ -127,7 +299,7 @@ const menuDataHantek = {
     }
 };
 
-// --- ★変更: Agilent (Keysight)用のメニュー定義 (InfiniiVision系を想定) ---
+// オシロスコープのメニュー項目（Agilent / Keysight: InfiniiVision系を想定）
 const menuDataAgilent = {
     "CH1_MENU": {
         title: "Vertical (CH1)", // Agilentは少し詳細
@@ -157,8 +329,12 @@ const menuDataAgilent = {
         items: ["Mode: Normal", "Peak Detect", "Averaging", "High Res", "Segmneted"] // Agilent特有のHigh Resなど
     }
 };
-// ボタン説明文
+
+const MENU_DATA = { hantek: menuDataHantek, agilent: menuDataAgilent };
+
+// ホットスポットにマウスを乗せたときに出す説明文（キーはホットスポットの title）
 const descriptions = {
+    // ---------- オシロスコープ ----------
     "電源ボタン": "電源をオン・オフします。",
     "F1": "画面メニューの選択ボタン。",
     "F2": "画面メニューの選択ボタン。",
@@ -170,24 +346,21 @@ const descriptions = {
     "Single": "一度だけ波形を取り込んで止めます。",
     "SaveRecall": "設定や波形データの保存・呼び出しを行います。",
     "Measure": "数値を自動計測して表示します。",
-    "Acquire": "波形の取り込み方を設定します。",
-    "Utility": "システム設定を行います。",
     "Cursor": "手動計測を行います。",
-    "Display": "表示方法を変更します。",
     "CH1_MENU": "CH1の詳細設定を行います。",
     "CH2_MENU": "CH2の詳細設定を行います。",
     "CH3_MENU": "CH3の詳細設定を行います。",
     "CH4_MENU": "CH4の詳細設定を行います。",
     "Ch1": "CH1入力端子。\n🔌 直流電源と結線するには：PS端子をクリックしてから、この端子をクリック\n（または Shift+クリックで選択開始）\n右クリックで切断",
     "Ch2": "CH2入力端子。\n🔌 直流電源と結線するには：PS端子をクリックしてから、この端子をクリック\n（または Shift+クリックで選択開始）\n右クリックで切断",
-    "Ch3": "CH3入力端子。\n🔌 AD/DA変換機のTP5(比較器出力)などと結線するには：AD/DA側の端子をクリックしてから、この端子をクリック\n右クリックで切断\n※「AD変換器の変換過程の観察」実験では、CH1=TP3(S/H信号)、CH2=TP8、CH3=TP5(いずれも比較器出力)を接続します。",
+    "Ch3": "CH3入力端子。\n🔌 AD/DA変換機のTP5(逐次比較のDA出力)などと結線するには：AD/DA側の端子をクリックしてから、この端子をクリック\n右クリックで切断\n※「AD変換器の変換過程の観察」実験では、CH1=TP3(S/H信号)、CH2=TP8(比較器出力)、CH3=TP5(逐次比較のDA出力)を接続します。",
     "Ch4": "CH4入力端子。",
 
     "Volt1": "【電圧軸ツマミ(CH1)】\nCH1の電圧スケール(V/div)を変更します。",
     "Volt2": "【電圧軸ツマミ(CH2)】\nCH2の電圧スケール(V/div)を変更します。",
     "Volt3": "【電圧軸ツマミ(CH3)】\nCH3の電圧スケール(V/div)を変更します。",
     "Volt4": "【電圧軸ツマミ(CH4)】\nCH4の電圧スケール(V/div)を変更します。",
-    
+
     "Pos1": "【オフセット(CH1)】\nCH1の波形を上下に移動させます。",
     "Pos2": "【オフセット(CH2)】\nCH2の波形を上下に移動させます。",
     "Pos3": "【オフセット(CH3)】\nCH3の波形を上下に移動させます。",
@@ -209,8 +382,8 @@ const descriptions = {
 
     // --- Agilent: Measure / Analyze (計測・解析) ---
     "Meas": "自動計測メニュー。\n電圧(Vpp)や周波数(Freq)などを自動で測って数値表示します。",
-    "Cursr": "カーソル測定。\n画面に点線（カーソル）を表示し、手動で電圧や時間を測ります。",
-    "Cursrツマミ": "汎用ツマミ。\nカーソルの位置移動などに使用します。",
+    "Cursr": "カーソル測定。\n画面に点線（カーソル）を表示し、手動で時間や電圧を測ります。\n押すたびに操作するカーソルが A → B（時間）→ Y1 → Y2（電圧）→ 非表示 と切り替わります。\n電圧は選択中のチャンネルの目盛りで読みます。",
+    "Cursrツマミ": "汎用ツマミ。\nホイールで操作中のカーソルを動かします。\n画面を直接クリックして、その位置へ移動させることもできます。",
     "Acquire": "波形取り込み設定。\n平均化(Averaging)やピーク検出などのモードを変更します。",
     "Display": "表示設定。\n波形の明るさ、グリッドの種類、残像表示などを設定します。",
 
@@ -254,2123 +427,24 @@ const descriptions = {
     "CursorA": "【カーソルツマミ A】\n1本目のカーソル（測定用の点線）を移動させます。",
     "CursorB": "【カーソルツマミ B】\n2本目のカーソル（測定用の点線）を移動させます。",
 
-    "output": "【出力端子】\nファンクションジェネレータの出力や、外部トリガー入力などの端子を表します。\nここをクリックして信号の接続状態を切り替えます。"
-
-};
-
-// ツールチップの説明文（descriptionsオブジェクトの中に追加）
-Object.assign(descriptions, {
+    // ---------- 発振器 ----------
     "fctnout": "【発振器 MAIN OUT 端子】\nメイン出力端子（BNC）。設定した波形を出力します。\n🔌 クリックして選択し、オシロスコープの端子と接続できます\n右クリックで切断",
     "subout":  "【発振器 SUB OUT 端子】\nサブ出力端子。\n🔌 クリックして選択し、オシロスコープの端子と接続できます\n右クリックで切断",
-});
 
-// ツールチップの説明文（descriptionsオブジェクトの中に追加）
-Object.assign(descriptions, {
+    // ---------- 直流電源 ----------
     "ps_power": "【直流電源 電源】\n直流電源の電源をオン・オフします。",
     "ch1btn": "【CH1選択】\n電圧・電流ツマミの操作対象をCH1に切り替えます。",
     "ch2btn": "【CH2選択】\n電圧・電流ツマミの操作対象をCH2に切り替えます。",
-    "volt": "【電圧(V)ツマミ】\nホイール操作で選択中のチャンネルの電圧を変更します。",
+    "volt": "【電圧(V)ツマミ】\nホイール操作で選択中のチャンネルの電圧を変更します。\nクリック（ツマミを押す）で 粗調整(0.1V刻み) ⇔ FINE(0.01V刻み) を切り替えます。",
     "curr": "【電流(A)ツマミ】\nホイール操作で選択中のチャンネルの電流上限を変更します。",
     "output": "【出力(Output)】\n設定した電圧・電流の出力をオン・オフします。",
     "ch1pura": "CH1 プラス端子（赤）\n🔌 クリックして選択し、オシロの端子と接続できます\n右クリックで切断",
     "ch1mai":  "CH1 マイナス端子（黒）\n🔌 クリックして選択し、オシロの端子と接続できます\n右クリックで切断",
     "ch2pura": "CH2 プラス端子（赤）\n🔌 クリックして選択し、オシロの端子と接続できます\n右クリックで切断",
     "ch2mai":  "CH2 マイナス端子（黒）\n🔌 クリックして選択し、オシロの端子と接続できます\n右クリックで切断",
-});
-
-
-// --- 2. モデル切り替え機能 ---
-function changeModel(modelName) {
-    console.log('モデル切り替え:', modelName);
-    currentModelId = modelName;
-
-    const allModels = document.querySelectorAll('.instrument-container');
-    allModels.forEach(el => el.style.display = 'none');
-
-    const activeContainer = document.getElementById('model-' + modelName);
-    if (activeContainer) {
-        activeContainer.style.display = 'block';
-        canvas = document.getElementById('canvas-' + modelName);
-        ctx = canvas.getContext('2d');
-        tooltip = document.getElementById('tooltip-' + modelName);
-        autoFit();
-    }
-}
-
-function switchModelUI(modelName) {
-    changeModel(modelName);
-    
-    // ボタンのアクティブ表示切替
-    document.getElementById('btn-model-hantek').classList.remove('active');
-    document.getElementById('btn-model-agilent').classList.remove('active');
-    document.getElementById('btn-manual').classList.remove('active'); // 説明書ボタンもOFFにする
-
-    document.getElementById('btn-model-' + modelName).classList.add('active');
-
-    // 説明書を隠す
-    document.getElementById('manual-screen').style.display = 'none';
-}
-
-// 説明書を表示する関数
-function showManual() {
-    // 1. 全てのオシロスコープモデルを隠す
-    document.querySelectorAll('.instrument-container').forEach(el => {
-        el.style.display = 'none';
-    });
-
-    // 2. 説明書エリアを表示
-    document.getElementById('manual-screen').style.display = 'flex';
-
-    // 3. ボタンのアクティブ状態を更新
-    document.getElementById('btn-model-hantek').classList.remove('active');
-    document.getElementById('btn-model-agilent').classList.remove('active');
-    document.getElementById('btn-manual').classList.add('active');
-}
-
-// --- ズーム機能 (完全版: 位置ズレ防止・正確な中央寄せ) ---
-let currentZoom = 100;
-
-function setZoom(newZoom) {
-    if (newZoom < 20) newZoom = 20;
-    if (newZoom > 400) newZoom = 400;
-
-    currentZoom = Math.floor(newZoom);
-    const scale = currentZoom / 100;
-
-    const zoomDisplay = document.getElementById('zoom-display');
-    if (zoomDisplay) zoomDisplay.innerText = currentZoom + '%';
-
-    const containers = document.querySelectorAll('.instrument-container');
-    
-    // ★修正: 画面全体ではなく、親枠(main-stage)の幅を取得する
-    const stage = document.querySelector('.main-stage');
-    // ステージがない場合の安全策
-    const viewWidth = stage ? stage.clientWidth : window.innerWidth;
-    const viewHeight = stage ? stage.clientHeight : window.innerHeight;
-
-    containers.forEach(container => {
-        if (container.style.display === 'none') return;
-
-        const img = container.querySelector('img');
-        if (!img) return;
-        
-        const originalWidth = img.naturalWidth;
-        const originalHeight = img.naturalHeight;
-        if (originalWidth === 0) return;
-
-        const scaledWidth = originalWidth * scale;
-        const scaledHeight = originalHeight * scale;
-
-        // 1. 変形適用 (左上基準)
-        container.style.transform = `scale(${scale})`;
-        // ドラッグ移動に対応させるため、marginによる余白調整をすべて無効化(0)にします
-        container.style.marginLeft = '0px';
-        container.style.marginTop = '0px';
-        container.style.marginBottom = '0px';
-        container.style.marginRight = '0px';
-
-        // 親要素（ドラッグ判定枠）のサイズを、ズーム後の実際の表示サイズに強制的に合わせる
-        const wrapper = container.closest('.draggable-equipment');
-        if (wrapper) {
-            // style.css にある !important を上書きして確実にするために setProperty を使用
-            wrapper.style.setProperty('width', `${scaledWidth}px`, 'important');
-            wrapper.style.setProperty('height', `${scaledHeight}px`, 'important');
-        }
-    });
-}
-function changeZoom(amount) { setZoom(currentZoom + amount); }
-
-// 波形の種類を変更
-function setWaveType(type) {
-    // 現在選択中のチャンネルの信号を変更
-    const ch = scopeState.activeChannel;
-    scopeState.signals[ch].type = type;
-
-    // UIのボタンの見た目を更新 (Sine/Square/Tri の active 切り替え)
-    document.querySelectorAll('[id^="btn-wave-"]').forEach(btn => btn.classList.remove('active'));
-    document.getElementById('btn-wave-' + type).classList.add('active');
-    
-    if (scopeState.isOn) drawWaveform();
-}
-
-// 振幅を変更
-function changeSignalAmplitude(amount) {
-    const ch = scopeState.activeChannel;
-    let newAmp = scopeState.signals[ch].amplitude + amount;
-
-    // 制限 (0.5V ～ 10V)
-    if (newAmp < 0.5) newAmp = 0.5;
-    if (newAmp > 10.0) newAmp = 10.0;
-    
-    scopeState.signals[ch].amplitude = newAmp;
-    
-    if (scopeState.isOn) drawWaveform();
-}
-
-// チャンネル切り替え時に、パネルの波形ボタンの見た目を同期させるための関数
-function updateControlPanelUI() {
-    const ch = scopeState.activeChannel;
-    const currentType = scopeState.signals[ch].type;
-    
-    document.querySelectorAll('[id^="btn-wave-"]').forEach(btn => btn.classList.remove('active'));
-    const activeBtn = document.getElementById('btn-wave-' + currentType);
-    if (activeBtn) activeBtn.classList.add('active');
-}
-
-
-// 入力ソースを切り替える関数
-function switchInputSource(source) {
-    scopeState.inputSource = source;
-    
-    // ボタンの見た目（青いハイライト）を切り替え
-    const btnInternal = document.getElementById('btn-src-internal');
-    const btnPs = document.getElementById('btn-src-ps');
-    if (btnInternal) btnInternal.classList.remove('active');
-    if (btnPs) btnPs.classList.remove('active');
-    
-    if (source === 'internal') {
-        if (btnInternal) btnInternal.classList.add('active');
-    } else if (source === 'power_supply') {
-        if (btnPs) btnPs.classList.add('active');
-    }
-    // 'fg' の場合はコントロールパネルのボタンはどちらもOFF（AD/DAパネルで管理）
-    
-    // 切り替えたらすぐに波形を再描画する
-    if (typeof drawAgilent === 'function') drawAgilent();
-}
-
-
-
-function autoFit() {
-    const img = document.querySelector('#model-' + currentModelId + ' img');    
-    if (!img || img.naturalWidth === 0) return;
-    
-    const stage = document.querySelector('.main-stage');
-    const availableWidth = stage ? stage.clientWidth : (window.innerWidth - 40);
-    const availableHeight = stage ? stage.clientHeight : (window.innerHeight - 180);
-
-    // 画像が収まる倍率を計算
-    let bestScale = Math.min(availableWidth / img.naturalWidth, availableHeight / img.naturalHeight);
-    let bestZoom = bestScale * 100;
-
-    // 少し余白を持たせるために 95% くらいにする
-    bestZoom = bestZoom * 0.95;
-
-    if (bestZoom > 100) bestZoom = 100;
-    setZoom(bestZoom);
-}
-
-window.addEventListener('load', autoFit);
-window.addEventListener('resize', autoFit);
-
-
-// --- 4. 描画ロジック ---
-
-function drawGrid() {
-    ctx.strokeStyle = 'rgba(0, 255, 0, 0.6)'; // くっきり表示
-    ctx.lineWidth = 1;
-    const gridSpacing = 50;
-    for (let x = 0; x < canvas.width; x += gridSpacing) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-    }
-    for (let y = 0; y < canvas.height; y += gridSpacing) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-    }
-}
-
-// メニュー描画（モデル別リアルUI対応版）
-// メニュー描画（機種別データ対応版）
-function drawMenu() {
-    // メニューが開いていない、または電源OFFなら描画しない
-    if (!scopeState.currentMenu || !scopeState.isOn) return;
-
-    const key = scopeState.currentMenu;
-    let data;
-
-    // ★変更: 現在のモデルに合わせてデータソースを切り替える
-    if (currentModelId === 'hantek') {
-        data = menuDataHantek[key];
-        if (data) drawMenuHantek(data);
-    } 
-    else if (currentModelId === 'agilent') {
-        data = menuDataAgilent[key];
-        // Agilentの場合、CH1_MENUなどのキーが共通でも中身があるか確認
-        if (data) drawMenuAgilent(data);
-    }
-}
-// --- Hantek風のメニュー描画 ---
-// 特徴: 青っぽい背景、独立したボタン風のボックス
-function drawMenuHantek(data) {
-    const menuWidth = 100;
-    const menuX = canvas.width - menuWidth; 
-
-    // 1. メニュー全体の背景 (画面右端の帯)
-    // Hantekは薄い青色の帯があることが多い
-    ctx.fillStyle = "rgba(0, 50, 100, 0.8)";
-    ctx.fillRect(menuX, 0, menuWidth, canvas.height);
-    
-    // 2. タイトルエリア (一番上)
-    ctx.fillStyle = "#002d5c"; // 濃い紺色
-    ctx.fillRect(menuX + 2, 2, menuWidth - 4, 40);
-    
-    ctx.fillStyle = "white";
-    ctx.font = "bold 14px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(data.title, menuX + (menuWidth / 2), 25);
-
-    // 3. 各項目の描画 (F1～F5ボタンの位置に合わせる)
-    // Hantekの実機画像を見ると、ボタンは等間隔に並んでいる
-    // 画面の高さ(360px)から、上部の余白を除いて配置
-    
-    const startY = 60; // 最初のボタンのY位置
-    const buttonHeight = 50; // ボタンの高さ
-    const gap = 10; // ボタン間の隙間
-
-    ctx.font = "12px sans-serif";
-
-    data.items.forEach((item, index) => {
-        // 5個までしか表示できない (F1-F5)
-        if (index >= 5) return;
-
-        const boxY = startY + index * (buttonHeight + gap);
-        
-        // ボタンの背景 (角丸四角形風)
-        ctx.fillStyle = "#004080"; // 明るめの紺色
-        ctx.strokeStyle = "#4da6ff"; // 水色の枠線
-        ctx.lineWidth = 1;
-
-        ctx.beginPath();
-        ctx.rect(menuX + 5, boxY, menuWidth - 10, buttonHeight);
-        ctx.fill();
-        ctx.stroke();
-
-        // テキスト (2行に分割する簡易処理)
-        ctx.fillStyle = "white";
-        const parts = item.split(": ");
-        if (parts.length > 1) {
-            // "Type: Sine" のようにコロンがある場合、2行にする
-            ctx.fillText(parts[0], menuX + (menuWidth / 2), boxY + 20);
-            ctx.fillStyle = "yellow"; // 値の部分は黄色に
-            ctx.fillText(parts[1], menuX + (menuWidth / 2), boxY + 38);
-        } else {
-            // 1行の場合
-            ctx.fillStyle = "white";
-            ctx.fillText(item, menuX + (menuWidth / 2), boxY + 30);
-        }
-    });
-}
-
-// --- Agilent (Keysight)風のメニュー描画 ---
-// 特徴: 画面下部に横並び、チャンネルごとに色が変化
-function drawMenuAgilent(data) {
-    const menuHeight = 65; 
-    const menuY = canvas.height - menuHeight;
-
-    // 1. 背景 (半透明の黒)
-    ctx.fillStyle = "rgba(0, 0, 0, 0.9)"; // 少し濃くしました
-    ctx.fillRect(0, menuY, canvas.width, menuHeight);
-    
-    // --- ★追加: チャンネルごとの色決定ロジック ---
-    let themeColor = "#ccc"; // デフォルト（グレー）
-    const menuKey = scopeState.currentMenu;
-
-    if (menuKey === 'CH1_MENU') {
-        themeColor = "yellow"; // CH1選択時は黄色
-    } else if (menuKey === 'CH2_MENU') {
-        themeColor = "cyan";   // CH2選択時は水色
-    } else if (menuKey === 'CH3_MENU') {
-        themeColor = "#ff66ff"; // CH3選択時はマゼンタ
-    }
-
-    // 上部の境界線 (テーマカラーにする)
-    ctx.strokeStyle = themeColor;
-    ctx.lineWidth = 2; // 少し太くして強調
-    ctx.beginPath();
-    ctx.moveTo(0, menuY);
-    ctx.lineTo(canvas.width, menuY);
-    ctx.stroke();
-
-    // 2. 左端にタイトルを表示 (実機っぽく)
-    // Agilentは一番左に現在のメニュー名が出ることが多いです
-    ctx.fillStyle = themeColor;
-    ctx.font = "bold 14px 'Segoe UI', sans-serif";
-    ctx.textAlign = "left";
-    ctx.fillText(data.title, 10, menuY - 10); // メニューバーの少し上に表示
-
-
-    // 3. 各項目の描画
-    const buttonCount = 6;
-    const itemWidth = canvas.width / buttonCount;
-
-    ctx.font = "bold 12px 'Segoe UI', sans-serif";
-
-    data.items.forEach((item, index) => {
-        if (index >= buttonCount) return;
-
-        const itemX = index * itemWidth;
-
-        // 区切り線
-        if (index > 0) {
-            ctx.strokeStyle = "#555";
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(itemX, menuY);
-            ctx.lineTo(itemX, canvas.height);
-            ctx.stroke();
-        }
-
-        const parts = item.split(": ");
-        ctx.textAlign = "center";
-
-        if (parts.length > 1) {
-            // 上段: ラベル
-            ctx.fillStyle = "#bbb"; 
-            ctx.font = "12px sans-serif";
-            ctx.fillText(parts[0], itemX + (itemWidth / 2), menuY + 22);
-            
-            // 下段: 設定値 (★テーマカラーで強調)
-            ctx.fillStyle = themeColor; 
-            ctx.font = "bold 14px sans-serif";
-            ctx.fillText(parts[1], itemX + (itemWidth / 2), menuY + 48);
-        } else {
-            // 1行のみ
-            ctx.fillStyle = "white"; // 共通項目は白のまま
-            ctx.font = "bold 13px sans-serif";
-            ctx.fillText(item, itemX + (itemWidth / 2), menuY + 38);
-        }
-    });
-}
-// =======================================================================
-//  波形描画関数 (複数ch同時表示・AC/DC再現・信号操作対応版)
-// =======================================================================
-// 指定したチャンネル・時刻における電圧値を取得する関数
-function getSignalVoltage(ch, t) {
-    const signal = scopeState.signals[ch];
-    if (!signal) return 0;
-
-    const freq = signal.frequency;
-    const amp = signal.amplitude;
-    let targetTime = t;
-
-    // --- ① 標本化 (Sampling & Hold) の再現 ---
-    // もし信号がAD/DA基板の出力（例: TP5 や DA_OUT など）として設定されている場合
-    // ※ signalオブジェクトに ad_da.mode フラグ等が立っているかで判定します
-    let isAdDaOutput = (scopeState.ad_da && scopeState.ad_da.mode && ch === 'CH2'); 
-    // （結線ロジック側で signal.isAdDaOutput = true; のようにフラグ付けしておくとより確実です）
-
-    if (isAdDaOutput) {
-        // サンプリング周期(µs)を秒(s)に変換して、現在の時間 t を丸める
-        const Ts = scopeState.ad_da.samplingPeriod * 1e-6; 
-        targetTime = Math.floor(t / Ts) * Ts; 
-    }
-
-    // --- ② 元のアナログ波形の計算 (targetTime を使用) ---
-    const phase = 2 * Math.PI * freq * targetTime;
-    let val = 0;
-    if (signal.type === 'sine') {
-        val = Math.sin(phase);
-    } else if (signal.type === 'square') {
-        val = Math.sin(phase) >= 0 ? 1 : -1;
-    } else if (signal.type === 'tri') {
-        val = (2 / Math.PI) * Math.asin(Math.sin(phase));
-    }
-    
-    let voltage = val * amp;
-
-    // --- ③ 量子化 (Quantization) の再現 ---
-    if (isAdDaOutput) {
-        const res = scopeState.ad_da.resolution; // 4 or 8
-        const levels = Math.pow(2, res); // 4bit=16段階, 8bit=256段階
-        
-        // 波形の振幅の2倍をフルスケールレンジとして、1段階あたりの電圧(q)を計算
-        const q = (amp * 2) / levels; 
-        
-        // 電圧を離散化（階段状に丸める）
-        voltage = Math.round((voltage + amp) / q) * q - amp;
-    }
-
-    return voltage;
-}
-
-// トリガーポイント（時間オフセット）を計算する関数
-function calculateTriggerOffset() {
-    const source = scopeState.trigger.source;
-    const level = scopeState.trigger.level;
-    const signal = scopeState.signals[source];
-    
-    // 信号が無い場合はそのまま流す
-    if (!signal) return scopeState.timeOffset;
-
-    const freq = signal.frequency;
-    const period = 1.0 / freq; // 1周期の時間
-    
-    const steps = 100; 
-    const dt = period / steps;
-    const baseTime = scopeState.timeOffset; 
-
-    // --- 1. トリガポイントの探索 ---
-    for (let i = 0; i < steps * 2; i++) {
-        const t1 = baseTime - (i * dt);
-        const t2 = baseTime - ((i + 1) * dt);
-
-        const v1 = getSignalVoltage(source, t1);
-        const v2 = getSignalVoltage(source, t2);
-
-        // Rising Edge (立ち上がり) 検出
-        if (scopeState.trigger.slope === 'rising') {
-            if (v2 < level && v1 >= level) {
-                // ★トリガ成功！
-                scopeState.trigger.isTriggered = true;
-                scopeState.trigger.lastOffset = t1; // 位置を記憶
-                scopeState.trigger.lossTimer = 0;   // タイマーリセット
-                return t1;
-            }
-        }
-        // Falling Edge なら逆の判定...
-    }
-    
-    // --- 2. トリガが見つからなかった場合の処理 (ここが重要) ---
-    
-    // すぐに諦めず、少しの間(例えば60フレーム=約1秒)は
-    // 「前回のトリガ位置」を使い続ける
-    const TIMEOUT_FRAMES = 60; 
-
-    if (scopeState.trigger.lossTimer < TIMEOUT_FRAMES) {
-        // まだ猶予期間中 -> 前回の位置を返して「止まっているように見せる」
-        scopeState.trigger.lossTimer++;
-        
-        // 画面上の表示は "Trig'd?" のようにしても良いが、
-        // 実機に合わせて Trig'd のままか、あるいは点滅させる等の表現になる。
-        // ここではチラつき防止優先で isTriggered = true のまま扱う手もあるが、
-        // 厳密にはトリガしていないので false にしつつ固定表示する。
-        
-        // ユーザー体験的には「止まっている＝トリガ中」と感じるので true 維持でもOK
-        scopeState.trigger.isTriggered = true; 
-        
-        return scopeState.trigger.lastOffset;
-    } else {
-        // 完全にトリガを見失った -> Autoモード（波形を流す）へ移行
-        scopeState.trigger.isTriggered = false;
-        return scopeState.timeOffset; 
-    }
-}
-
-// =======================================================================
-//  【補助関数】信号電圧の計算
-//   指定したチャンネル(ch)と時間(t)における本来の電圧値を返します
-// =======================================================================
-function getSignalVoltage(ch, t) {
-    const signal = scopeState.signals[ch];
-    const freq = signal.frequency;
-    const amp = signal.amplitude;
-    
-    // 位相 (2πft)
-    // ※ scopeState.timeOffset は calculateTriggerOffset 側で考慮されるためここでは使いません
-    const phase = 2 * Math.PI * freq * t;
-    
-    let val = 0;
-    if (signal.type === 'sine') {
-        val = Math.sin(phase);
-    } else if (signal.type === 'square') {
-        val = Math.sin(phase) >= 0 ? 1 : -1;
-    } else if (signal.type === 'tri') {
-        val = (2 / Math.PI) * Math.asin(Math.sin(phase));
-    }
-    
-    // 実際の電圧 = 波形値(-1~1) * 振幅
-    return val * amp;
-}
-
-// =======================================================================
-//  【補助関数】トリガーオフセットの計算
-//   「波形がトリガーレベルをまたぐ瞬間」がいつなのかを計算して返します
-// =======================================================================
-function calculateTriggerOffset() {
-    // ソース（通常CH1）とレベルの設定を取得
-    const source = scopeState.trigger.source;
-    const level = scopeState.trigger.level;
-    const signal = scopeState.signals[source];
-    
-    // まだ信号設定がない等の場合はそのまま流す
-    if (!signal) return scopeState.timeOffset;
-
-    const freq = signal.frequency;
-    const period = 1.0 / freq; // 1周期の時間
-    
-    // トリガー探索の精度（分割数）
-    const steps = 100; 
-    const dt = period / steps;
-
-    // 現在流れている時間（アニメーション用）を基準にする
-    // これにより、トリガーがかからない時は波形が流れて見える
-    const baseTime = scopeState.timeOffset; 
-
-    // 「現在時刻」の近くで、電圧がトリガーレベルをまたぐ瞬間を探す
-    // 範囲は少し広め（2周期分）にとって確実に捕捉する
-    for (let i = 0; i < steps * 2; i++) {
-        // 未来に向かって少しずつ時間を進めてチェック
-        // (baseTime はマイナス方向に進むことが多いので、ここでは絶対値や剰余で調整しても良いが、
-        //  単純に相対時間で検索する方がスムーズにつながる)
-        const t1 = baseTime - (i * dt);     // 直前
-        const t2 = baseTime - ((i + 1) * dt); // 直後（時間はマイナスに進んでいる前提）
-
-        const v1 = getSignalVoltage(source, t1);
-        const v2 = getSignalVoltage(source, t2);
-
-        // Rising Edge（立ち上がり）検出
-        // 「直前はレベルより低く」かつ「直後はレベル以上」の瞬間
-        if (scopeState.trigger.slope === 'rising') {
-            if (v2 < level && v1 >= level) {
-                scopeState.trigger.isTriggered = true;
-                return t1; // 見つけた時間を返す（これで描画位置を固定する）
-            }
-        }
-        // Falling Edge（立ち下がり）検出なら不等号を逆にする
-    }
-    
-    // 見つからなかった場合（レベルが高すぎる等）
-    scopeState.trigger.isTriggered = false;
-    return scopeState.timeOffset; // そのまま時間を流す（Autoモード）
-}
-
-// =======================================================================
-//  メイン描画関数: drawWaveform
-// =======================================================================
-function drawWaveform() {
-    // 1. 画面クリア
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // 電源OFFなら真っ暗にして終了
-    if (!scopeState.isOn) {
-        ctx.fillStyle = "black";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        return;
-    }
-
-    // 2. 背景グリッドを描画
-    drawGrid();
-
-    // 共通パラメータの計算
-    const currentTimeDiv = TIME_STEPS[scopeState.timeIndex];
-    const centerY = canvas.height / 2;
-    const pixelsPerGrid = 50; // 1グリッド = 50px
-
-    // ★トリガー計算
-    // 波形を止めるための「時間ズレ」を取得
-    let drawTimeOffset = calculateTriggerOffset();
-
-    // 画面中央を「時間0（トリガーポイント）」にするための補正値
-    // これがないと、画面の左端が時間0になってしまう
-    const centerTimeShift = (canvas.width / 2 / pixelsPerGrid) * currentTimeDiv;
-
-    // ==========================================
-    // 3. 波形描画ループ (CH1, CH2, [CH3])
-    //    CH3は現在表示中のモデルが対応している場合のみ描画する
-    //    （Hantek=2ch機、Agilent=Ch3端子ありの3ch分表示に対応）
-    // ==========================================
-    const activeChannels = MODEL_CHANNELS[currentModelId] || ['CH1', 'CH2'];
-    activeChannels.forEach(ch => {
-        const signal = scopeState.signals[ch];
-        
-        // チャンネルごとの設定（色、電圧レンジ、カップリング）
-        let voltIndex, color, coupling;
-        if (ch === 'CH1') {
-            voltIndex = scopeState.voltIndexCH1;
-            color = 'yellow';
-            coupling = 'DC';
-        } else if (ch === 'CH3') {
-            voltIndex = scopeState.voltIndexCH3;
-            color = '#ff66ff'; // マゼンタ
-            coupling = 'DC';
-        } else {
-            voltIndex = scopeState.voltIndexCH2;
-            color = 'cyan';
-            coupling = 'AC';
-        }
-        
-        const currentVoltDiv = VOLT_STEPS[voltIndex];
-        
-        // オフセット（AC結合なら無視、DCなら反映）
-        let effectiveOffset = (coupling === 'AC') ? 0 : (signal.offset || 0);
-
-        // 描画開始
-        ctx.beginPath();
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
-
-        // もともとの計算式に、マウスホイールで動かす position の値を足し算（または引き算）します
-        // ※ ch によって足す変数を切り替えます
-        const wheelOffsetFor = (c) => c === 'CH1' ? scopeState.positionCH1 : (c === 'CH3' ? scopeState.positionCH3 : scopeState.positionCH2);
-        const wheelOffset = wheelOffsetFor(ch);
-
-        // 核心部分の行を、このように直接書いてみてください
-        const offsetPx = ((effectiveOffset / currentVoltDiv) * pixelsPerGrid) + wheelOffset;
-
-        // X座標（画面の左端から右端まで）ループ
-        // 負荷軽減のため step=2 (2pxごとに計算) にしています
-        for (let x = 0; x < canvas.width; x += 2) {
-            
-            // 1. 画面上のX座標を「時間」に変換
-            const gridX = x / pixelsPerGrid;
-            const timeSpan = gridX * currentTimeDiv;
-
-            // 2. 実際の信号時間を計算
-            //   [画面の時間] + [トリガーによる固定] - [画面中央への補正]
-            const signalTime = timeSpan + drawTimeOffset - centerTimeShift;
-            
-            // ========================================================
-            // ★ 入力ソースの分岐（直流電源 / 発振器+AD/DA / 内部テスト）
-            // ========================================================
-            let rawVolt = 0;
-            if (scopeState.inputSource === 'power_supply') {
-                // 【直流電源モード】結線があり、電源と出力が両方ONの時だけ電圧を反映
-                const termName = ch === 'CH1' ? 'Ch1' : (ch === 'CH3' ? 'Ch3' : 'Ch2');
-                const conn = wiringState.connections.find(c => c.oscTerminal === termName);
-                if (conn && psState.isOn && psState.isOutputOn) {
-                    if (conn.psTerminal === 'ch1pura') {
-                        rawVolt = psState.ch1.voltage;
-                    } else if (conn.psTerminal === 'ch1mai') {
-                        rawVolt = -psState.ch1.voltage;
-                    } else if (conn.psTerminal === 'ch2pura') {
-                        rawVolt = psState.ch2.voltage;
-                    } else if (conn.psTerminal === 'ch2mai') {
-                        rawVolt = -psState.ch2.voltage;
-                    }
-                }
-            } else if (scopeState.inputSource === 'fg') {
-                // 【発振器 + AD/DA変換モード、またはFGワイヤー接続モード】
-                const signal = scopeState.signals[ch];
-                if (signal && signal.source === 'fg_wire') {
-                    // FGワイヤー直結: 生波形を直接描画
-                    rawVolt = getSignalVoltageRaw(ch, signalTime);
-                } else {
-                    rawVolt = getOscilloscopeVoltage(ch, signalTime, x);
-                }
-            } else {
-                // 【内部テスト信号モード】
-                rawVolt = getSignalVoltage(ch, signalTime);
-            }
-            // ========================================================
-            
-            // 4. 電圧をY座標に変換
-            //   Canvasは上が0、下がプラスなのでマイナスする
-            const y = centerY - (rawVolt / currentVoltDiv * pixelsPerGrid) - offsetPx;
-
-            if (x === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-    });
-
-    // ==========================================
-    // 4. トリガーレベルラインと矢印の描画
-    // ==========================================
-    // CH1の電圧レンジを基準にレベル位置を計算
-    const trigRange = VOLT_STEPS[scopeState.voltIndexCH1];
-    const trigLevelPx = (scopeState.trigger.level / trigRange) * pixelsPerGrid;
-    
-    // Y座標を計算 (画面外にはみ出ないように制限をかけるとよりリアルですが、今回はそのまま)
-    const trigY = centerY - trigLevelPx;
-    
-    // --- (A) 点線の描画 ---
-    ctx.beginPath();
-    ctx.strokeStyle = "rgba(255, 165, 0, 0.7)"; // オレンジ
-    ctx.setLineDash([5, 5]); // 点線
-    ctx.lineWidth = 1;
-    ctx.moveTo(0, trigY);
-    ctx.lineTo(canvas.width, trigY);
-    ctx.stroke();
-    ctx.setLineDash([]); // 実線に戻す
-
-    // --- (B) ★追加: 右端の矢印マーカー描画 ---
-    const markerWidth = 24;  // マーカーの幅
-    const markerHeight = 18; // マーカーの高さ
-    const markerX = canvas.width; // 画面の右端
-    
-    ctx.beginPath();
-    ctx.fillStyle = "rgba(255, 165, 0, 1)"; // 不透明なオレンジ
-    
-    // ホームベース型を横に倒した形（左向きの矢印）を描く
-    ctx.moveTo(markerX - markerWidth, trigY); // 左の先端
-    ctx.lineTo(markerX - (markerWidth * 0.4), trigY - (markerHeight / 2)); // 左上の角
-    ctx.lineTo(markerX, trigY - (markerHeight / 2)); // 右上の角
-    ctx.lineTo(markerX, trigY + (markerHeight / 2)); // 右下の角
-    ctx.lineTo(markerX - (markerWidth * 0.4), trigY + (markerHeight / 2)); // 左下の角
-    ctx.closePath();
-    ctx.fill();
-    
-    // マーカーの中に「T」の文字を書く
-    ctx.fillStyle = "black"; // 文字は黒
-    ctx.font = "bold 11px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    // マーカーの四角い部分の中心あたりに文字を置く
-    ctx.fillText("T", markerX - (markerWidth * 0.25), trigY + 1);
-
-    // ==========================================
-    // 5. テキスト情報 (インジケーター)
-    // ==========================================
-    ctx.font = "bold 16px sans-serif";
-    ctx.textAlign = "left";
-
-    // --- CH1 情報 ---
-    const vDiv1 = VOLT_STEPS[scopeState.voltIndexCH1];
-    const vText1 = vDiv1 >= 1 ? `${vDiv1.toFixed(2)}V` : `${(vDiv1*1000).toFixed(0)}mV`;
-    const marker1 = (scopeState.activeChannel === 'CH1') ? "▶ " : "   ";
-    ctx.fillStyle = "yellow";
-    const ch1Label = (scopeState.inputSource === 'fg') ? 'DA出力' : 'CH1';
-    ctx.fillText(`${marker1}${ch1Label} ${vText1}`, 20, canvas.height - 20);
-
-    // --- CH2 情報 ---
-    const vDiv2 = VOLT_STEPS[scopeState.voltIndexCH2];
-    const vText2 = vDiv2 >= 1 ? `${vDiv2.toFixed(2)}V` : `${(vDiv2*1000).toFixed(0)}mV`;
-    const marker2 = (scopeState.activeChannel === 'CH2') ? "▶ " : "   ";
-    ctx.fillStyle = "cyan";
-    const ch2Label = (scopeState.inputSource === 'fg') ? '原波形' : 'CH2';
-    ctx.fillText(`${marker2}${ch2Label} ${vText2}`, 200, canvas.height - 20);
-
-    // --- CH3 情報（Agilentなど、Ch3端子を持つモデルのみ）---
-    if ((MODEL_CHANNELS[currentModelId] || []).includes('CH3')) {
-        const vDiv3 = VOLT_STEPS[scopeState.voltIndexCH3];
-        const vText3 = vDiv3 >= 1 ? `${vDiv3.toFixed(2)}V` : `${(vDiv3*1000).toFixed(0)}mV`;
-        const marker3 = (scopeState.activeChannel === 'CH3') ? "▶ " : "   ";
-        ctx.fillStyle = "#ff66ff";
-        ctx.fillText(`${marker3}CH3 ${vText3}`, 380, canvas.height - 20);
-    }
-
-    // --- 時間軸 情報 ---
-    ctx.fillStyle = "white";
-    ctx.textAlign = "center";
-    let tText = currentTimeDiv >= 1 ? `${currentTimeDiv.toFixed(2)}s` : 
-                currentTimeDiv >= 0.001 ? `${(currentTimeDiv*1000).toFixed(2)}ms` : `${(currentTimeDiv*1000000).toFixed(0)}us`;
-    ctx.fillText(`M ${tText}`, canvas.width / 2, canvas.height - 20);
-
-    // --- FG/AD/DAモード情報 (左上) ---
-    if (scopeState.inputSource === 'fg' && fgState.outputOn) {
-        ctx.fillStyle = "rgba(0,0,0,0.7)";
-        ctx.fillRect(5, 5, 260, 50);
-        ctx.fillStyle = "#00ff88";
-        ctx.font = "11px monospace";
-        ctx.textAlign = "left";
-        const freqStr = fgState.freq >= 1000 ? (fgState.freq/1000).toFixed(2)+'kHz' : fgState.freq.toFixed(0)+'Hz';
-        const fsHz = 1000000 / adDaState.samplingPeriodUs;
-        const fsStr = fsHz >= 1000 ? (fsHz/1000).toFixed(0)+'kHz' : fsHz+'Hz';
-        ctx.fillText(`FG: ${fgState.waveform} ${freqStr} ${fgState.amptd.toFixed(2)}Vpp`, 10, 18);
-        ctx.fillStyle = "#ffaa00";
-        ctx.fillText(`AD/DA: ${adDaState.resolution}bit  fs=${fsStr}  (${adDaState.samplingPeriodUs}µs)`, 10, 32);
-        // サンプリング定理判定
-        const inputFreq = fgState.freq;
-        const nyquist = fsHz / 2;
-        if (inputFreq > nyquist) {
-            const foldedFreq = getAliasedFrequency(inputFreq, fsHz);
-            const foldedStr = foldedFreq >= 1000 ? (foldedFreq/1000).toFixed(2)+'kHz' : foldedFreq.toFixed(0)+'Hz';
-            ctx.fillStyle = "#ff4444";
-            ctx.fillText(`⚠ エイリアス! fin(${freqStr}) > fs/2(${(nyquist/1000).toFixed(1)}kHz) → fout=${foldedStr}`, 10, 46);
-        } else {
-            ctx.fillStyle = "#88ff88";
-            ctx.fillText(`✓ fin < fs/2 (${(nyquist/1000).toFixed(1)}kHz) サンプリング定理OK`, 10, 46);
-        }
-    }
-
-    // --- トリガー情報 (右上) ---
-    ctx.textAlign = "right";
-    ctx.fillStyle = "rgba(255, 165, 0, 1)";
-    const statusText = scopeState.trigger.isTriggered ? "Trig'd" : "Auto";
-    // トリガーレベルと状態を表示
-    ctx.fillText(`T: ${scopeState.trigger.level.toFixed(2)}V (${statusText})`, canvas.width - 10, 30);
-
-    // ==========================================
-    // 6. メニュー描画
-    // ==========================================
-    drawMenu();
-
-    if (scopeState.showMeasure) {
-        // 現在アクティブなチャンネルのデータを取得（CH1かCH2）
-        const targetCh = scopeState.activeChannel; 
-        const signal = scopeState.signals[targetCh];
-
-        // 常に最新の振幅と周波数を取得！
-        const currentAmp = signal.amplitude;
-        const currentFreq = signal.frequency;
-
-        // Vp-pの計算（振幅の2倍）
-        const vpp = (currentAmp * 2).toFixed(2);
-
-        // 周波数の単位調整 (1000Hz以上ならkHzにする)
-        let freqDisplay = "";
-        if (currentFreq >= 1000) {
-            freqDisplay = (currentFreq / 1000).toFixed(2) + " kHz";
-        } else {
-            freqDisplay = currentFreq.toFixed(2) + " Hz";
-        }
-
-        // --- 描画処理 ---
-        // 背景の黒い半透明ボックスを描画（右上の邪魔にならない位置に配置）
-        ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
-        // メニューが開いている時とかぶらないように少し内側に配置
-        ctx.fillRect(canvas.width - 250, 40, 140, 70); 
-
-        // 文字の設定
-        ctx.fillStyle = "#00FF00"; // 蛍光グリーン
-        ctx.font = "bold 14px sans-serif";
-        ctx.textAlign = "left"; // 文字を左揃えにする
-
-        // 文字の描画
-        ctx.fillText(`[${targetCh}]`, canvas.width - 240, 60);
-        ctx.fillText(`Vp-p: ${vpp} V`, canvas.width - 240, 80);
-        ctx.fillText(`Freq: ${freqDisplay}`, canvas.width - 240, 100);
-    }
-
-    if (scopeState.cursor.show) {
-        ctx.save();
-        
-        // 1. カーソル線の描画
-        ctx.lineWidth = 2;
-        ctx.setLineDash([5, 5]); // 点線
-        
-        // カーソルAの線 (現在操作中なら少し明るくするなど色を変えると分かりやすいです)
-        ctx.beginPath();
-        ctx.strokeStyle = scopeState.cursor.target === 'A' ? "#00FFFF" : "rgba(255,255,255,0.5)";
-        ctx.moveTo(scopeState.cursor.posA, 0);
-        ctx.lineTo(scopeState.cursor.posA, canvas.height);
-        ctx.stroke();
-
-        // カーソルBの線
-        ctx.beginPath();
-        ctx.strokeStyle = scopeState.cursor.target === 'B' ? "#00FFFF" : "rgba(255,255,255,0.5)";
-        ctx.moveTo(scopeState.cursor.posB, 0);
-        ctx.lineTo(scopeState.cursor.posB, canvas.height);
-        ctx.stroke();
-
-        // 2. 値の計算
-        const pixelsPerDiv = 50; // ※お使いのグリッドの1マスのピクセル幅
-        const timePerDiv = TIME_STEPS[scopeState.timeIndex]; 
-        const timePerPixel = timePerDiv / pixelsPerDiv;
-        
-        const pixelDiff = Math.abs(scopeState.cursor.posB - scopeState.cursor.posA);
-        const deltaT = pixelDiff * timePerPixel;
-        const freq = deltaT > 0 ? (1 / deltaT) : 0;
-
-        // 3. 値の描画表示
-        ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
-        ctx.fillRect(10, 10, 160, 60); // 背景ボックス
-        
-        ctx.fillStyle = "#FFF";
-        ctx.font = "14px sans-serif";
-        ctx.setLineDash([]); 
-        
-        const displayDeltaT = deltaT >= 1 ? `${deltaT.toFixed(2)} s` : `${(deltaT * 1000).toFixed(2)} ms`;
-        const displayFreq = freq >= 1000 ? `${(freq / 1000).toFixed(2)} kHz` : `${freq.toFixed(2)} Hz`;
-
-        ctx.fillText(`Δt : ${displayDeltaT}`, 20, 35);
-        ctx.fillText(`1/Δt : ${displayFreq}`, 20, 55);
-        
-        ctx.restore();
-    }
-}
-function animationLoop() {
-    if (scopeState.isOn && scopeState.isRunning) {
-        scopeState.timeOffset -= 0.0001; 
-    }
-    if (canvas && ctx) {
-        drawWaveform();
-    }
-    requestAnimationFrame(animationLoop);
-}
-
-
-// --- 5. イベントリスナー ---
-const containers = document.querySelectorAll('.instrument-container');
-
-containers.forEach(container => {
-    
-    // --- クリックイベント ---
-// --- クリックイベント (ボタン操作) ---
-    container.addEventListener('click', function(e) {
-        // 非表示のモデルでのクリックは無視
-        if (container.style.display === 'none') return;
-        
-        // ホットスポット（透明ボタン）以外のクリックは無視
-        let target = e.target;
-        if (!target.classList.contains('hotspot')) return;
-
-        const title = target.title; // 例: "電源ボタン", "CH1_MENU", "Measure"
-
-        // [0] 端子クリック（結線システム）
-        if (PS_TERMINALS.includes(title)) {
-            handleTerminalClick(title, target);
-            return;
-        }
-        // オシロ端子（Ch1/Ch2）: 選択中の端子がある場合、または直流電源モード時は結線処理
-        if (OSC_TERMINALS.includes(title)) {
-            if (wiringState.pendingTerminal || e.shiftKey) {
-                handleTerminalClick(title, target);
-                return;
-            }
-        }
-
-        // [A] 電源ボタンの処理
-        if (title === '電源ボタン') {
-            target.classList.toggle('active'); // activeクラスの付け外し
-            
-            // 電源状態を更新
-            scopeState.isOn = target.classList.contains('active');
-            
-            if (scopeState.isOn) {
-                scopeState.isRunning = true;
-                
-                // 電源ON時の初期状態設定
-                scopeState.activeChannel = 'CH1';  // CH1を選択状態に
-                scopeState.currentMenu = 'CH1_MENU'; // メニューも開く
-                
-                updateControlPanelUI(); // コントロールパネルの表示を同期
-            } else {
-                // 電源OFF時はメニューを閉じる
-                scopeState.currentMenu = null;
-            }
-        }
-        
-        // [B] チャンネル選択 & メニュー表示 (CH1)
-        else if (title === 'CH1_MENU' || title === 'Ch1') {
-            if (!scopeState.isOn) return; // 電源OFFなら何もしない
-            if( scopeState.currentMenu === 'CH1_MENU' ) {
-                // すでにCH1メニューが開いている場合は閉じる
-                scopeState.currentMenu = null;
-                updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
-                return;
-            } else {
-                scopeState.activeChannel = 'CH1';    // 操作対象をCH1に
-                scopeState.currentMenu = 'CH1_MENU'; // メニューを開く
-            }
-            
-            updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
-        }
-
-            // --- 直流電源のボタン操作 ---
-        else if (title === 'ps_power') {
-            psState.isOn = !psState.isOn;
-            if (!psState.isOn) psState.isOutputOn = false; // 電源OFFで出力も強制OFF
-            console.log("直流電源:", psState.isOn ? "ON" : "OFF");
-            updatePSDisplay();
-        }
-        else if (title === 'ch1btn') {
-            if (!psState.isOn) return;
-            psState.activeChannel = 'CH1';
-            console.log("直流電源 操作対象: CH1");
-        }
-        else if (title === 'ch2btn') {
-            if (!psState.isOn) return;
-            psState.activeChannel = 'CH2';
-            console.log("直流電源 操作対象: CH2");
-        }
-        else if (title === 'output') {
-            if (!psState.isOn) return;
-            psState.isOutputOn = !psState.isOutputOn;
-            console.log("直流電源 出力:", psState.isOutputOn ? "ON" : "OFF");
-            
-            // ★ ここでオシロスコープに電圧の値を渡す処理を呼ぶことになります
-            updateOscilloscopeSignal(); 
-        }
-        
-        // [C] チャンネル選択 & メニュー表示 (CH2)
-        else if (title === 'CH2_MENU' || title === 'Ch2') {
-            if (!scopeState.isOn) return;
-            if( scopeState.currentMenu === 'CH2_MENU' ) {
-                // すでにCH2メニューが開いている場合は閉じる
-                scopeState.currentMenu = null;
-                updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
-                return;
-            } else {
-                scopeState.activeChannel = 'CH2';    // 操作対象をCH2に
-                scopeState.currentMenu = 'CH2_MENU'; // メニューを開く
-            }
-            
-            updateControlPanelUI(); // コントロールパネルの信号ボタン表示を更新
-        }
-
-        // [C'] チャンネル選択 & メニュー表示 (CH3) ※AD変換過程観察(TP5)用
-        else if (title === 'CH3_MENU' || title === 'Ch3') {
-            if (!scopeState.isOn) return;
-            if( scopeState.currentMenu === 'CH3_MENU' ) {
-                scopeState.currentMenu = null;
-                updateControlPanelUI();
-                return;
-            } else {
-                scopeState.activeChannel = 'CH3';
-                scopeState.currentMenu = 'CH3_MENU';
-            }
-            
-            updateControlPanelUI();
-        }
-        
-        // [D] その他の汎用メニューボタン (Measure, Acquire, Utilityなど)
-        else {
-            // 現在のモデルに対応したメニューデータが存在するかチェック
-            let isMenuButton = false;
-            
-            if (currentModelId === 'hantek' && menuDataHantek[title]) {
-                isMenuButton = true;
-            } else if (currentModelId === 'agilent' && menuDataAgilent[title]) {
-                isMenuButton = true;
-            }
-
-            // メニューボタンかつ電源ONなら処理
-            if (isMenuButton && scopeState.isOn) {
-                // すでに同じメニューが開いていれば閉じる、違えば開く
-                if (scopeState.currentMenu === title) {
-                    scopeState.currentMenu = null;
-                } else {
-                    scopeState.currentMenu = title;
-                }
-            }
-            
-            // [E] Run/Stopボタン
-            if (title === 'RunStop') {
-                scopeState.isRunning = !scopeState.isRunning;
-            }
-            // [F] AutoSetボタン (簡易リセット機能)
-            else if (title === 'AutoSet' && scopeState.isOn) {
-                // 適当に見やすい値にリセットする演出
-                scopeState.voltIndexCH1 = 6; // 1.0V
-                scopeState.voltIndexCH2 = 6; // 1.0V
-                scopeState.timeIndex = 15;   // 0.1s
-                scopeState.timeOffset = 0;
-                scopeState.currentMenu = null;
-                console.log("AutoSet executed");
-            }
-            // [G] Measボタンがクリックされた時の処理
-            else if (title === 'Meas' || title === 'Measure') {
-                if (!scopeState.isOn) return;
-                // 表示のON/OFFを切り替える
-                scopeState.showMeasure = !scopeState.showMeasure;
-                        
-                // ついでにメニューも開く/閉じる場合は以下を追加しても良いです
-                scopeState.currentMenu = scopeState.showMeasure ? 'Measure' : null;
-            }
-
-            else if (title === 'Cursr' || title === 'Cursors') {
-            if (!scopeState.isOn) return;
-            
-            // 状態をローテーションさせる (非表示 -> A操作 -> B操作 -> 非表示)
-            if (!scopeState.cursor.show) {
-                scopeState.cursor.show = true;
-                scopeState.cursor.target = 'A';
-            } else if (scopeState.cursor.target === 'A') {
-                scopeState.cursor.target = 'B';
-            } else {
-                scopeState.cursor.show = false;
-            }
-            drawWaveform(); 
-        }
-        }
-    });
-    // --- マウスホイールイベント (ツマミ用) ---
-    // ここがループの内側にあることが重要です！
-    container.addEventListener('wheel', function(e) {
-        if (!e.target.classList.contains('hotspot')) return;
-        const title = e.target.title;
-
-        // 電圧ツマミ
-        if (title === 'KNOB_VOLT' || title === 'Volt1' || title === 'Volt2' || title === 'Volt3' || title === 'Volt4') {
-            e.preventDefault();
-
-            // どのツマミかを判定（モデルによってtitleが違うため、両方に対応）
-            // Agilent実機はVolt1=CH1, Volt2=CH2, Volt3=CH3, Volt4=CH4に対応する独立したツマミ
-            const isCH1Knob = (title === 'Volt1');
-            const isCH2Knob = (title === 'Volt2');
-            const isCH3Knob = (title === 'Volt3');
-            
-            // Agilentモデルなどで 'KNOB_VOLT' と共通の名前になっている場合は、
-            // 便宜上今まで通り activeChannel を参照するようにしておきます
-            let targetCH = scopeState.activeChannel; 
-            if (isCH1Knob) targetCH = 'CH1';
-            if (isCH2Knob) targetCH = 'CH2';
-            if (isCH3Knob) targetCH = 'CH3';
-
-            if (targetCH === 'CH1') {
-                if (e.deltaY > 0) {
-                    if (scopeState.voltIndexCH1 < VOLT_STEPS.length - 1) scopeState.voltIndexCH1++;
-                } else {
-                    if (scopeState.voltIndexCH1 > 0) scopeState.voltIndexCH1--;
-                }
-            } else if (targetCH === 'CH3') {
-                if (e.deltaY > 0) {
-                    if (scopeState.voltIndexCH3 < VOLT_STEPS.length - 1) scopeState.voltIndexCH3++;
-                } else {
-                    if (scopeState.voltIndexCH3 > 0) scopeState.voltIndexCH3--;
-                }
-            } else {
-                // CH2の場合
-                if (e.deltaY > 0) {
-                    if (scopeState.voltIndexCH2 < VOLT_STEPS.length - 1) scopeState.voltIndexCH2++;
-                } else {
-                    if (scopeState.voltIndexCH2 > 0) scopeState.voltIndexCH2--;
-                }
-            }
-        }
-        // 時間ツマミ
-        else if (title === 'KNOB_TIME') {
-            e.preventDefault();
-            if (e.deltaY > 0) { // 手前へ回す（時間圧縮＝レンジ上げ）
-                if (scopeState.timeIndex < TIME_STEPS.length - 1) scopeState.timeIndex++;
-            } else { // 奥へ回す（時間拡大＝レンジ下げ）
-                if (scopeState.timeIndex > 0) scopeState.timeIndex--;
-            }
-        }
-        // トリガーレベルツマミ
-        else if (title === 'Level' || title === 'Trigger Level') {
-            e.preventDefault();
-            // CH1の現在のボルトレンジを基準に増減量を決める
-            const currentRange = VOLT_STEPS[scopeState.voltIndexCH1];
-            const step = currentRange * 0.5; // レンジの10%ずつ変化
-
-            if (e.deltaY < 0) { // 奥へ回す（レベル上げる）
-                scopeState.trigger.level += step;
-            } else { // 手前へ回す（レベル下げる）
-                scopeState.trigger.level -= step;
-            }
-        }
-        // --- 直流電源のツマミ操作 ---
-        else if (title === 'volt') {
-            e.preventDefault();
-            if (!psState.isOn) return; // 電源OFF時は無効
-            
-            const ch = psState.activeChannel.toLowerCase(); // 'ch1' または 'ch2'
-            if (e.deltaY < 0) { // 手前に回す（増やす）
-                psState[ch].voltage = Math.min(30.0, psState[ch].voltage + 0.1);
-            } else { // 奥に回す（減らす）
-                psState[ch].voltage = Math.max(0.0, psState[ch].voltage - 0.1);
-            }
-            
-            console.log(`${psState.activeChannel} 電圧: ${psState[ch].voltage.toFixed(1)} V`);
-            updatePSDisplay();
-            if (typeof updateOscilloscopeSignal === 'function') updateOscilloscopeSignal();
-        }
-        else if (title === 'curr') {
-            e.preventDefault();
-            if (!psState.isOn) return;
-            
-            const ch = psState.activeChannel.toLowerCase();
-            if (e.deltaY < 0) {
-                psState[ch].current = Math.min(3.00, psState[ch].current + 0.01);
-            } else {
-                psState[ch].current = Math.max(0.00, psState[ch].current - 0.01);
-            }
-            
-            console.log(`${psState.activeChannel} 電流: ${psState[ch].current.toFixed(2)} A`);
-            updatePSDisplay();
-        }
-
-        // --- 位置（Position）ツマミ ---
-        else if (title === 'Pos1' || title === 'Pos2' || title === 'Pos3') {
-            e.preventDefault();
-            if (!scopeState.isOn) return;
-
-            const step = 5; // 1スクロールで動くピクセル数
-            if (title === 'Pos1') {
-                scopeState.positionCH1 += (e.deltaY < 0) ? step : -step;
-                // ツマミ画像の回転（任意）
-                const k = document.getElementById('Pos1');
-                if (k) k.style.transform = `rotate(${scopeState.positionCH1}deg)`;
-            } else if (title === 'Pos3') {
-                scopeState.positionCH3 += (e.deltaY < 0) ? step : -step;
-                const k = document.getElementById('Pos3');
-                if (k) k.style.transform = `rotate(${scopeState.positionCH3}deg)`;
-            } else {
-                scopeState.positionCH2 += (e.deltaY < 0) ? step : -step;
-                const k = document.getElementById('Pos2');
-                if (k) k.style.transform = `rotate(${scopeState.positionCH2}deg)`;
-            }
-        }
-
-        else if (title === 'KNOB_CURSOR' || title === 'Cursrツマミ' ) {
-        e.preventDefault();
-        if (!scopeState.cursor.show) return; // カーソル非表示時は何もしない
-
-        // スクロール方向の判定 (奥に回すか手前に回すか)
-        const direction = e.deltaY > 0 ? 1 : -1;
-        const step = 5; // 1回のスクロールで動くピクセル数（好みの速度に調整してください）
-
-        // 選択されているカーソルを動かす
-        if (scopeState.cursor.target === 'A') {
-            scopeState.cursor.posA += direction * step;
-            // 画面外に出ないように制限する場合
-            // scopeState.cursor.posA = Math.max(0, Math.min(canvas.width, scopeState.cursor.posA));
-        } else if (scopeState.cursor.target === 'B') {
-            scopeState.cursor.posB += direction * step;
-        }
-        drawWaveform(); 
-
-
-    }
-
-
-
-
-    }, { passive: false });
-
-
-    // --- ツールチップ関連 ---
-    container.addEventListener('mouseover', function(e) {
-        if (e.target.classList.contains('hotspot') && descriptions[e.target.title]) {
-            tooltip.innerText = descriptions[e.target.title];
-            tooltip.style.display = 'block';
-        }
-    });
-    container.addEventListener('mousemove', function(e) {
-        if (tooltip && tooltip.style.display === 'block') {
-            tooltip.style.left = (e.pageX + 15) + 'px';
-            tooltip.style.top = (e.pageY + 15) + 'px';
-        }
-    });
-    container.addEventListener('mouseout', function(e) {
-        tooltip.style.display = 'none';
-    });
-});
-
-
-// --- 6. マップ変換機能（実装済み=青、未実装=赤 に色分け版） ---
-(function convertMapToHotspots() {
-    
-    // ★「機能が実装されている」ボタン名の一覧
-    const activeFeatures = [
-        "電源ボタン", "RunStop", "AutoSet", "Meas", 'Cursr',
-        "CH1_MENU", "CH2_MENU", "CH3_MENU", "Ch1", "Ch2",
-        "KNOB_TIME", "KNOB_VOLT",
-        "Volt1", "Volt2", "Volt3", "Volt4",
-        "Level", 'Cursrツマミ',
-        'ps_power', 'ch1btn', 'ch2btn', 'volt', 'curr', 'output',
-        'ch1pura', 'ch1mai', 'ch2pura', 'ch2mai', 'grd',
-        'Ch1', 'Ch2', 'Ch3', 'Ch4', 'Pos1', 'Pos2',
-        // FGボタン（全て実装済み）
-        'latorpowar', 'fctn', 'freq', 'amptd', 'offset',
-        'seven', 'eight', 'nine', 'fore', 'five', 'six',
-        'one', 'two', 'three', 'zero', 'dot', 'puramai',
-        'enter', 'cansel', 'undo', 'out', 'fctnout', 'subout'
-    ];
-
-    // FGのマップ名→コンテナIDの特殊マッピング
-    // 通常は map.name が "map-xxx" で getElementById("model-xxx") を探すが
-    // FGは "fg-map" という名前なので明示的にマッピングする
-    const mapNameToContainerId = {
-        'fg-map': 'model-fg',
-        'adda-map': 'model-adda'
-        // 通常のマップは replace('map-', 'model-') で自動処理される
-    };
-
-    const maps = document.querySelectorAll('map');
-    maps.forEach(map => {
-        // コンテナIDを解決（FG用特殊マッピング or 通常ルール）
-        const containerId = mapNameToContainerId[map.name] 
-                          || map.name.replace('map-', 'model-');
-        const targetContainer = document.getElementById(containerId);
-        if (!targetContainer) return;
-
-        // FGマップかどうかを判定（クリック処理の振り分けに使う）
-        const isFgMap = (map.name === 'fg-map');
-        const isAddaMap = (map.name === 'adda-map');
-
-        const areas = map.querySelectorAll('area');
-        areas.forEach((area) => {
-            const shape = area.getAttribute('shape');
-            const coordsStr = area.getAttribute('coords');
-            if (!coordsStr) return;
-            const coords = coordsStr.split(',').map(Number);
-            const title = area.getAttribute('title') || area.getAttribute('alt') || '';
-
-            const div = document.createElement('div');
-            div.className = 'hotspot';
-            div.title = title;
-            div.dataset.btnId = title; // FGボタンIDとして使用
-            div.id = 'btn-' + title.replace(/\s+/g, '-');
-            div.style.position = 'absolute';
-            div.style.zIndex = '100';
-            div.style.cursor = 'pointer';
-
-            // FGのhostspotにはクリックハンドラを直接設定
-            // （usemapのonclickはズーム時に座標ズレで反応しなくなるため）
-            if (isFgMap) {
-                div.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    // 端子クリック（fctnout / subout）は結線システムへ
-                    if (FG_TERMINALS.includes(title)) {
-                        handleTerminalClick(title, div);
-                    } else {
-                        handleFgButton(title);
-                    }
-                });
-            }
-            if (isAddaMap) {
-                div.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    if (area.classList.contains('terminal-spot')) {
-                        handleTerminalClick(title, div);
-                    } else {
-                        handleAddaSwitch(title);
-                    }
-                });
-            }
-
-            // 実装状況の色分け
-            const isActive = isAddaMap ||
-                             activeFeatures.includes(title) || 
-                             (typeof menuDataHantek !== 'undefined' && menuDataHantek[title]) ||
-                             (typeof menuDataAgilent !== 'undefined' && menuDataAgilent[title]);
-
-            if (isActive) {
-                div.style.backgroundColor = 'rgba(0, 100, 255, 0.3)';
-                div.style.border = '2px solid rgba(0, 100, 255, 0.6)';
-            } else {
-                div.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
-                div.style.border = '1px dashed rgba(255, 0, 0, 0.6)';
-            }
-
-            // 座標設定
-            if (shape === 'rect') {
-                const [x1, y1, x2, y2] = coords;
-                div.style.left   = Math.min(x1, x2) + 'px';
-                div.style.top    = Math.min(y1, y2) + 'px';
-                div.style.width  = Math.abs(x2 - x1) + 'px';
-                div.style.height = Math.abs(y2 - y1) + 'px';
-            } else if (shape === 'circle') {
-                const [x, y, r] = coords;
-                div.style.left        = (x - r) + 'px';
-                div.style.top         = (y - r) + 'px';
-                div.style.width       = (r * 2) + 'px';
-                div.style.height      = (r * 2) + 'px';
-                div.style.borderRadius = '50%';
-            }
-
-            targetContainer.appendChild(div);
-        });
-    });
-})();
-
-// =======================================================================
-//  結線（ワイヤー）システム
-// =======================================================================
-
-// 結線の状態管理
-// 接続情報: { psTerminal: 'ch1pura'|'ch1mai'|'ch2pura'|'ch2mai'|'grd', oscTerminal: 'Ch1'|'Ch2', color: string }
-const wiringState = {
-    connections: [],       // 確定済みの接続リスト
-    pendingTerminal: null, // 最初にクリックした端子の情報 { elementId, terminalName, side:'ps'|'osc', color }
 };
 
-// 端子ごとのワイヤー色
-const TERMINAL_COLORS = {
-    'ch1pura': '#ff4444', // 赤（+）
-    'ch2pura': '#ff8800', // オレンジ（+）
-    'ch1mai':  '#222222', // 黒（−）
-    'ch2mai':  '#222222', // 黒（−）
-    'grd':     '#007700', // 緑（GND）
-    'Ch1':     '#ffff00', // 黄（オシロCH1）
-    'Ch2':     '#00ffff', // 水色（オシロCH2）
-    'Ch3':     '#ff66ff', // マゼンタ（オシロCH3）
-    'fctnout': '#ff6600', // オレンジ（FG メイン出力）
-    'subout':  '#cc44ff', // 紫（FG サブ出力）
-};
-
-// SVGオーバーレイを生成・取得
-function getWireSVG() {
-    let svg = document.getElementById('wire-overlay');
-    if (!svg) {
-        svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.id = 'wire-overlay';
-        svg.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:500;';
-        document.body.appendChild(svg);
-    }
-    return svg;
-}
-
-// 端子のホットスポット要素の画面上の中心座標を取得
-function getTerminalScreenPos(hotspotEl) {
-    const rect = hotspotEl.getBoundingClientRect();
-    return {
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2,
-    };
-}
-
-// 端子の「側（ps/fg/osc/adda）」と端子名から、その端子のホットスポット要素を取得する
-// 注意: 各コンテナ内には <map><area title="xxx"> が自動生成された
-// <div class="hotspot" title="xxx"> より前にDOM上に存在することがある。
-// [title=...] セレクタだと、サイズを持たない <area> が先にマッチしてしまい
-// getBoundingClientRect() が (0,0,0,0) になってしまうため、
-// 必ずホットスポットdiv（id="btn-xxx"）を優先的に取得する。
-function getTerminalElementForSide(side, termName) {
-    if (!termName) return null;
-
-    if (side === 'osc') {
-        // 現在表示されている（display: none でない）オシロスコープのコンテナを取得
-        const activeOscContainer = Array.from(document.querySelectorAll('#osc-container .instrument-container'))
-                                        .find(el => el.style.display !== 'none');
-        if (!activeOscContainer) return null;
-        return activeOscContainer.querySelector('#btn-' + termName) ||
-               activeOscContainer.querySelector(`[title="${termName}"]`) ||
-               activeOscContainer.querySelector(`[alt="${termName}"]`);
-    }
-    if (side === 'fg') {
-        const fgContainer = document.getElementById('model-fg');
-        if (!fgContainer) return null;
-        return fgContainer.querySelector('#btn-' + termName) ||
-               fgContainer.querySelector(`.hotspot[title="${termName}"]`);
-    }
-    if (side === 'adda') {
-        const addaContainer = document.getElementById('model-adda');
-        if (!addaContainer) return null;
-        return addaContainer.querySelector('#btn-' + termName) ||
-               addaContainer.querySelector(`.hotspot[title="${termName}"]`);
-    }
-    // 'ps' またはそれ以外
-    return document.getElementById('btn-' + termName);
-}
-
-// ワイヤーを全て再描画
-function redrawWires() {
-    const svg = getWireSVG();
-    svg.innerHTML = ''; // 一旦クリア
-
-    // 確定済みの接続を描画
-    wiringState.connections.forEach(conn => {
-        let side1, term1, side2, term2;
-
-        if (conn.type === 'fg') {
-            side1 = 'fg';  term1 = conn.fgTerminal;
-            side2 = 'osc'; term2 = conn.oscTerminal;
-        } else if (conn.type === 'adda') {
-            side1 = 'adda'; term1 = conn.addaTerminal || conn.psTerminal;
-            side2 = 'osc';  term2 = conn.oscTerminal;
-        } else if (conn.type === 'ps-adda') {
-            side1 = 'ps';   term1 = conn.psTerminal;
-            side2 = 'adda'; term2 = conn.addaTerminal;
-        } else if (conn.type === 'fg-adda') {
-            side1 = 'fg';   term1 = conn.fgTerminal;
-            side2 = 'adda'; term2 = conn.addaTerminal;
-        } else {
-            // 'ps'（直流電源 ↔ オシロ、従来どおり）
-            side1 = 'ps';  term1 = conn.psTerminal;
-            side2 = 'osc'; term2 = conn.oscTerminal;
-        }
-
-        const el1 = getTerminalElementForSide(side1, term1);
-        const el2 = getTerminalElementForSide(side2, term2);
-        if (!el1 || !el2) return;
-
-        const p1 = getTerminalScreenPos(el1);
-        const p2 = getTerminalScreenPos(el2);
-        drawWire(svg, p1, p2, conn.color, false);
-    });
-
-    // 選択中（未確定）の端子をハイライト
-    if (wiringState.pendingTerminal) {
-        // 【修正】getElementByIdで再取得せず、保存しておいた要素（el）をそのまま使うことでズレを防止
-        const el = wiringState.pendingTerminal.el;
-        if (el) {
-            const pos = getTerminalScreenPos(el);
-            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-            circle.setAttribute('cx', pos.x);
-            circle.setAttribute('cy', pos.y);
-            circle.setAttribute('r', 12);
-            circle.setAttribute('fill', 'none');
-            circle.setAttribute('stroke', wiringState.pendingTerminal.color);
-            circle.setAttribute('stroke-width', 3);
-            circle.setAttribute('stroke-dasharray', '4 3');
-            circle.style.animation = 'wirePulse 0.8s ease-in-out infinite alternate';
-            svg.appendChild(circle);
-        }
-    }
-}
-
-// ベジェ曲線でワイヤーを描く
-function drawWire(svg, p1, p2, color, dashed) {
-    // ワイヤーの影（立体感）
-    const shadow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    const mx = (p1.x + p2.x) / 2;
-    const my = Math.max(p1.y, p2.y) + Math.abs(p2.x - p1.x) * 0.3 + 40;
-    const d = `M ${p1.x} ${p1.y} Q ${mx} ${my} ${p2.x} ${p2.y}`;
-
-    shadow.setAttribute('d', d);
-    shadow.setAttribute('fill', 'none');
-    shadow.setAttribute('stroke', 'rgba(0,0,0,0.35)');
-    shadow.setAttribute('stroke-width', 7);
-    shadow.setAttribute('stroke-linecap', 'round');
-    svg.appendChild(shadow);
-
-    // 本体のワイヤー
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', d);
-    path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', color);
-    path.setAttribute('stroke-width', 4);
-    path.setAttribute('stroke-linecap', 'round');
-    if (dashed) path.setAttribute('stroke-dasharray', '8 5');
-    svg.appendChild(path);
-
-    // 両端の丸
-    [p1, p2].forEach(p => {
-        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        dot.setAttribute('cx', p.x);
-        dot.setAttribute('cy', p.y);
-        dot.setAttribute('r', 5);
-        dot.setAttribute('fill', color);
-        dot.setAttribute('stroke', 'white');
-        dot.setAttribute('stroke-width', 1.5);
-        svg.appendChild(dot);
-    });
-}
-
-// SVGアニメーション用スタイルを追加
-(function addWireStyles() {
-    const style = document.createElement('style');
-    style.textContent = `
-        @keyframes wirePulse {
-            from { opacity: 1; r: 10; }
-            to   { opacity: 0.4; r: 14; }
-        }
-        .hotspot.wire-selected {
-            box-shadow: 0 0 0 4px #fff, 0 0 0 7px gold !important;
-            z-index: 200 !important;
-        }
-        .hotspot.wire-connected {
-            border-color: rgba(0,255,100,0.9) !important;
-            background-color: rgba(0,200,80,0.25) !important;
-        }
-        #wire-status-bar {
-            position: fixed;
-            bottom: 10px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0,0,0,0.82);
-            color: #fff;
-            padding: 8px 20px;
-            border-radius: 20px;
-            font-size: 14px;
-            font-family: sans-serif;
-            z-index: 9999;
-            pointer-events: none;
-            transition: opacity 0.4s;
-            white-space: nowrap;
-        }
-    `;
-    document.head.appendChild(style);
-})();
-
-// ステータスバーにメッセージを表示
-function showWireStatus(msg, durationMs = 2500) {
-    let bar = document.getElementById('wire-status-bar');
-    if (!bar) {
-        bar = document.createElement('div');
-        bar.id = 'wire-status-bar';
-        document.body.appendChild(bar);
-    }
-    bar.textContent = msg;
-    bar.style.opacity = '1';
-    clearTimeout(bar._hideTimer);
-    bar._hideTimer = setTimeout(() => { bar.style.opacity = '0'; }, durationMs);
-}
-
-// 端子がPS側かオシロ側かを判定
-const PS_TERMINALS  = ['ch1pura','ch1mai','ch2pura','ch2mai','grd'];
-const OSC_TERMINALS = ['Ch1','Ch2','Ch3'];
-const FG_TERMINALS  = ['fctnout','subout']; // 発振器の出力端子
-
-function getTerminalSide(name) {
-    if (PS_TERMINALS.includes(name))  return 'ps';
-    if (OSC_TERMINALS.includes(name)) return 'osc';
-    if (FG_TERMINALS.includes(name))  return 'fg';
-    return null;
-}
-
-// 接続情報をもとにオシロスコープの入力電圧を更新
-// 接続情報をもとにオシロスコープの入力電圧を更新
-function updateOscilloscopeSignal() {
-    // CH1/CH2/CH3 それぞれについて、結線があるか・電源ONか・出力ONかを確認
-    ['CH1', 'CH2', 'CH3'].forEach(ch => {
-        const termName = ch === 'CH1' ? 'Ch1' : (ch === 'CH3' ? 'Ch3' : 'Ch2');
-        const conn = wiringState.connections.find(c => c.oscTerminal === termName);
-
-        // 【修正】結線がない場合は、オシロの入力を 0V に戻して終了する
-        if (!conn) {
-            if (scopeState.signals && scopeState.signals[ch]) {
-                scopeState.signals[ch].dcOverride = 0;
-            }
-            return;
-        }
-
-        let psVoltage = 0;
-        if (psState.isOn && psState.isOutputOn) {
-            // 【修正】プラスならそのまま、マイナスなら「-（マイナス）」を掛けて電圧を設定
-            if (conn.psTerminal === 'ch1pura') {
-                psVoltage = psState.ch1.voltage;
-            } else if (conn.psTerminal === 'ch1mai') {
-                psVoltage = -psState.ch1.voltage; // 💡マイナス電圧にする
-            } else if (conn.psTerminal === 'ch2pura') {
-                psVoltage = psState.ch2.voltage;
-            } else if (conn.psTerminal === 'ch2mai') {
-                psVoltage = -psState.ch2.voltage; // 💡マイナス電圧にする
-            }
-        }
-        
-        if (scopeState.signals && scopeState.signals[ch]) {
-            scopeState.signals[ch].dcOverride = psVoltage;
-        }
-    });
-}
-
-// 発振器の結線に応じてオシロスコープの信号を更新
-function updateFgWireSignal() {
-    // 発振器がONかつ出力ONかどうかを確認
-    const fgActive = fgState.power && fgState.outputOn;
-
-    ['CH1', 'CH2', 'CH3'].forEach(ch => {
-        const termName = ch === 'CH1' ? 'Ch1' : (ch === 'CH3' ? 'Ch3' : 'Ch2');
-        const conn = wiringState.connections.find(c => c.oscTerminal === termName && c.type === 'fg');
-
-        if (!conn) return; // この ch への FG 接続なし → 変更しない
-
-        if (fgActive) {
-            // 波形タイプをscope形式に変換
-            const waveMap = { 'SINE': 'sine', 'SQUARE': 'square', 'RAMP': 'tri' };
-            const waveType = waveMap[fgState.waveform] || 'sine';
-            const amplitude = fgState.amptd / 2; // Vpp → 振幅(片側)
-
-            scopeState.signals[ch] = {
-                type: waveType,
-                amplitude: amplitude,
-                frequency: fgState.freq,
-                offset: fgState.offset,
-                source: 'fg_wire'
-            };
-
-            // オシロの入力ソースをFGモードに
-            if (scopeState.inputSource !== 'fg') {
-                scopeState.inputSource = 'fg';
-            }
-            // 時間軸を自動調整
-            autoAdjustTimeAxis(fgState.freq);
-        } else {
-            // FG出力OFFの場合はフラットライン
-            scopeState.signals[ch] = { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg_wire' };
-        }
-    });
-}
-
-// 端子クリック処理（hotspotのclickから呼び出す）
-function handleTerminalClick(terminalName, hotspotEl) {
-    const side = getTerminalSide(terminalName);
-    if (!side) return false; // 端子でない
-
-    const color = TERMINAL_COLORS[terminalName] || '#ffffff';
-
-    if (!wiringState.pendingTerminal) {
-        // ─── 1本目の端子を選択 ───
-        wiringState.pendingTerminal = { terminalName, side, color, el: hotspotEl };
-        hotspotEl.classList.add('wire-selected');
-        showWireStatus(`🔌 端子「${terminalName}」を選択。次に接続先の端子をクリックしてください。`, 5000);
-        redrawWires();
-    } else {
-        // ─── 2本目の端子を選択 → 結線を確定 ───
-        const pending = wiringState.pendingTerminal;
-
-        // 同じ端子を再クリック → キャンセル
-        if (pending.terminalName === terminalName) {
-            pending.el.classList.remove('wire-selected');
-            wiringState.pendingTerminal = null;
-            showWireStatus('❌ 選択を解除しました。');
-            redrawWires();
-            return true;
-        }
-
-        // 同じサイド同士はNG
-        if (pending.side === side) {
-            const sideNames = { ps: '直流電源', osc: 'オシロスコープ', fg: '発振器' };
-            showWireStatus(`⚠️ ${sideNames[side]}の端子同士は繋げません。`);
-            return true;
-        }
-
-        // FG ↔ OSC の結線
-        if ((pending.side === 'fg' && side === 'osc') || (pending.side === 'osc' && side === 'fg')) {
-            const oscTerm = side === 'osc' ? terminalName : pending.terminalName;
-            const fgTerm  = side === 'fg'  ? terminalName : pending.terminalName;
-
-            // 既に同じオシロ端子に別の線がある場合は削除
-            wiringState.connections = wiringState.connections.filter(c => c.oscTerminal !== oscTerm);
-
-            const wireColor = TERMINAL_COLORS[fgTerm] || color;
-            wiringState.connections.push({ fgTerminal: fgTerm, oscTerminal: oscTerm, color: wireColor, type: 'fg' });
-
-            pending.el.classList.remove('wire-selected');
-            pending.el.classList.add('wire-connected');
-            hotspotEl.classList.add('wire-connected');
-            wiringState.pendingTerminal = null;
-
-            updateFgWireSignal();
-            showWireStatus(`✅ 発振器(${fgTerm}) ↔ オシロ(${oscTerm}) を接続しました。右クリックで切断できます。`);
-            redrawWires();
-            return true;
-        }
-
-        // PS ↔ OSC の結線（従来どおり）
-        if ((pending.side === 'ps' && side === 'osc') || (pending.side === 'osc' && side === 'ps')) {
-            // 既に同じオシロ端子に別の線が繋がっている場合は既存を削除
-            const oscTerm  = side === 'osc' ? terminalName : pending.terminalName;
-            const psTerm   = side === 'ps'  ? terminalName : pending.terminalName;
-            wiringState.connections = wiringState.connections.filter(c => c.oscTerminal !== oscTerm);
-
-            // 新しい接続を追加
-            const wireColor = TERMINAL_COLORS[psTerm] || color;
-            wiringState.connections.push({ psTerminal: psTerm, oscTerminal: oscTerm, color: wireColor, type: 'ps' });
-
-            // UI更新
-            pending.el.classList.remove('wire-selected');
-            pending.el.classList.add('wire-connected');
-            hotspotEl.classList.add('wire-connected');
-
-            wiringState.pendingTerminal = null;
-
-            // 結線に応じてオシロ信号を更新
-            updateOscilloscopeSignal();
-
-            showWireStatus(`✅ ${psTerm} ↔ ${oscTerm} を接続しました。右クリックで切断できます。`);
-            redrawWires();
-
-            // 直流電源モードに自動切替（結線したとき）
-            if (scopeState.inputSource !== 'power_supply') {
-                switchInputSource('power_supply');
-            }
-            return true;
-        }
-
-        // それ以外の組み合わせはNG（PS ↔ FG など）
-        showWireStatus('⚠️ この端子の組み合わせは接続できません。');
-    }
-    return true;
-}
-
-// 右クリックで切断
-document.addEventListener('contextmenu', function(e) {
-    const el = e.target.closest('.hotspot');
-    if (!el) return;
-    const terminalName = el.title;
-    const side = getTerminalSide(terminalName);
-    if (!side) return;
-
-    e.preventDefault();
-
-    // この端子を含む接続を全て削除
-    const before = wiringState.connections.length;
-    if (side === 'ps') {
-        wiringState.connections = wiringState.connections.filter(c => c.psTerminal !== terminalName);
-    } else if (side === 'fg') {
-        wiringState.connections = wiringState.connections.filter(c => c.fgTerminal !== terminalName);
-    } else if (side === 'adda') {
-        wiringState.connections = wiringState.connections.filter(c => c.addaTerminal !== terminalName);
-    } else {
-        wiringState.connections = wiringState.connections.filter(c => c.oscTerminal !== terminalName);
-    }
-    const after = wiringState.connections.length;
-
-    // ハイライト解除
-    el.classList.remove('wire-connected', 'wire-selected');
-
-    // 未確定の選択もキャンセル
-    if (wiringState.pendingTerminal) {
-        const pEl = document.getElementById('btn-' + wiringState.pendingTerminal.terminalName);
-        if (pEl) pEl.classList.remove('wire-selected');
-        wiringState.pendingTerminal = null;
-    }
-
-    updateOscilloscopeSignal();
-    updateFgWireSignal();
-
-    // TB1に結線されていた機器が切断された場合はAD/DA入力状態もリセット
-    if (typeof adDaState !== 'undefined') {
-        const tb1StillWired = wiringState.connections.some(c => c.addaTerminal === 'TB1');
-        if (!tb1StillWired) adDaState.tb1Wired = null;
-        if (document.getElementById('adda-photo-ui')) {
-            updateAdDaPanelDisplay();
-            updateAdDaTerminalSignals();
-        }
-    }
-
-    redrawWires();
-
-    if (before !== after) {
-        showWireStatus(`🔌 接続を切断しました。`);
-    }
-});
-
-// 全結線を削除
-function clearAllWires() {
-    // ハイライトを全解除
-    document.querySelectorAll('.hotspot.wire-connected, .hotspot.wire-selected').forEach(el => {
-        el.classList.remove('wire-connected', 'wire-selected');
-    });
-    wiringState.connections = [];
-    wiringState.pendingTerminal = null;
-    updateOscilloscopeSignal();
-    updateFgWireSignal();
-
-    if (typeof adDaState !== 'undefined') {
-        adDaState.tb1Wired = null;
-        if (document.getElementById('adda-photo-ui')) {
-            updateAdDaPanelDisplay();
-            updateAdDaTerminalSignals();
-        }
-    }
-
-    redrawWires();
-    showWireStatus('🔌 すべての結線を解除しました。');
-}
-
-const _origMouseMove = document.onmousemove;
-document.addEventListener('mousemove', function() {
-    if (dragTarget) redrawWires();
-});
-
-// ウィンドウリサイズ時にも再描画
-window.addEventListener('resize', redrawWires);
-
-// アプリケーション開始
-animationLoop();
-
-// AD/DA変換装置パネルを作成
-window.addEventListener('load', function() {
-    createAdDaPanel();
-    
-    // 器具リストにAD/DA装置を追加
-    const equipList = document.querySelector('.equipment-list');
-    if (equipList) {
-        const adDaItem = document.createElement('li');
-        adDaItem.innerHTML = 'AD/DA変換機';
-        adDaItem.onclick = function() {
-            toggleEquipment('adda');
-        };
-        equipList.appendChild(adDaItem);
-    }
-});
-
-// =======================================================================
-//  実技テストモード機能
-// =======================================================================
-
-// テストの状態管理
-let testState = {
-    active: false,
-    currentQuestionIndex: 0
-};
-
-// --- 問題データの定義 ---
-// setup: 問題開始時にオシロの設定をわざと狂わせる関数
-// check: ユーザーの設定が正しいか判定する関数 (trueなら正解)
-const quizData = [
-    {
-        id: 1,
-        text: "【第1問】CH1の波形が画面からはみ出しています。<br>電圧レンジ(Volts/Div)を調整して、波形全体が見えるように「2.00V」に設定してください。",
-        setup: function() {
-            // 初期設定: わざと拡大しすぎてはみ出させる
-            scopeState.isOn = true;
-            scopeState.activeChannel = 'CH1';
-            scopeState.voltIndexCH1 = 3; // 0.1V (はみ出す設定)
-            scopeState.signals['CH1'].type = 'sine';
-            scopeState.signals['CH1'].amplitude = 3.0; // 振幅3V
-            drawWaveform();
-        },
-        check: function() {
-            // 正解条件: CH1の電圧インデックスが 2.0V (Index=7) になっていること
-            // VOLT_STEPS = [0.01, ..., 1.0(6), 2.0(7), ...]
-            return VOLT_STEPS[scopeState.voltIndexCH1] === 2.0;
-        },
-        hint: "ヒント: 画像上の「電圧ツマミ」の上でマウスホイールを手前に回すと、レンジが広がります。"
-    },
-    {
-        id: 2,
-        text: "【第2問】波形の周期が細かすぎて見づらい状態です。<br>時間軸(Time/Div)を調整して、ゆったり見えるように「5.00ms」に設定してください。",
-        setup: function() {
-            // 初期設定: 時間軸を細かくしすぎる
-            scopeState.timeIndex = 6;
-            drawWaveform();
-        },
-        check: function() {
-            // 正解条件: 時間軸が 5ms (0.005s)
-            // TIME_STEPS配列の中から 0.005 を探すか、値を直接比較
-            const currentT = TIME_STEPS[scopeState.timeIndex];
-            // 浮動小数点計算の誤差を考慮して差分で比較するのが安全
-            return Math.abs(currentT - 0.005) < 0.0001;
-        },
-        hint: "ヒント: 右上の「時間ツマミ」を操作してください。"
-    },
-    {
-        id: 3,
-        text: "【第3問: 信号の切り替え】<br>現在、画面には丸みを帯びた「正弦波(Sine)」が表示されています。<br>左側のコントロールパネルにあるボタンを操作して、入力信号を角張った「矩形波(Square)」に切り替えてください。",
-        setup: function() {
-            // 初期設定: 見やすいように調整しつつ、必ずSine波にする
-            scopeState.isOn = true;
-            scopeState.activeChannel = 'CH1';
-            
-            scopeState.signals['CH1'].type = 'sine'; // ★ここを正弦波に固定
-            scopeState.signals['CH1'].amplitude = 2.0; 
-            
-            scopeState.voltIndexCH1 = 6; // 1.0V/div (見やすい大きさ)
-            scopeState.timeIndex = 15;   // 0.1s (見やすい周期)
-            
-            updateControlPanelUI(); // パネルのボタン表示を同期
-            drawWaveform();
-        },
-        check: function() {
-            // 正解条件: CH1の信号タイプが 'square' になっているか
-            return scopeState.signals['CH1'].type === 'square';
-        },
-        hint: "ヒント: 画面左側（CONTROL PANEL）の下の方にある「SIGNAL GEN」エリアを見てください。「Square」というボタンがあります。"
-    },
-    {
-        id: 4,
-        text: "【最終問題】波形の動きを止めて(STOP状態にして)ください。",
-        setup: function() {
-            scopeState.isRunning = true;
-        },
-        check: function() {
-            return scopeState.isRunning === false;
-        },
-        hint: "ヒント: 右上の「Run/Stop」ボタンを押します。"
-    }
-];
-
-// --- テスト制御関数 ---
-
-function startTestMode() {
-    testState.active = true;
-    testState.currentQuestionIndex = 0;
-    
-    // パネルを表示
-    document.getElementById('test-panel').style.display = 'block';
-    
-    // 第1問を表示
-    showQuestion();
-    
-    // 画面位置へスクロール
-    document.getElementById('test-panel').scrollIntoView({behavior: "smooth"});
-}
-
-function showQuestion() {
-    const q = quizData[testState.currentQuestionIndex];
-    
-    // 問題文セット
-    document.getElementById('question-text').innerHTML = q.text;
-    document.getElementById('question-counter').innerText = `Q ${testState.currentQuestionIndex + 1} / ${quizData.length}`;
-    
-    // フィードバックリセット
-    const fb = document.getElementById('test-feedback');
-    fb.innerHTML = "";
-    fb.className = "";
-    
-    // ボタン状態リセット
-    document.getElementById('btn-check-answer').style.display = 'inline-block';
-    document.getElementById('btn-next-question').style.display = 'none';
-
-    // ★重要: 問題ごとの初期状態（セットアップ）を実行
-    if (q.setup) {
-        q.setup();
-        updateControlPanelUI(); // UIの同期
-    }
-}
-
-function checkTestAnswer() {
-    const q = quizData[testState.currentQuestionIndex];
-    const fb = document.getElementById('test-feedback');
-    
-    // 判定ロジック実行
-    const isCorrect = q.check();
-    
-    if (isCorrect) {
-        fb.innerHTML = "正解です！素晴らしい！";
-        fb.className = "feedback-correct";
-        
-        // 「解答」ボタンを隠して「次へ」ボタンを表示
-        document.getElementById('btn-check-answer').style.display = 'none';
-        
-        if (testState.currentQuestionIndex < quizData.length - 1) {
-            document.getElementById('btn-next-question').style.display = 'inline-block';
-        } else {
-            fb.innerHTML += "<br>すべてのテストが終了しました！";
-        }
-    } else {
-        fb.innerHTML = "不正解です。<br>" + q.hint;
-        fb.className = "feedback-wrong";
-    }
-}
-
-function nextQuestion() {
-    testState.currentQuestionIndex++;
-    showQuestion();
-}
-
-// テストモードを中断して閉じる関数
-function quitTestMode() {
-    // 1. テスト状態を解除
-    testState.active = false;
-    
-    // 2. パネルを非表示にする
-    document.getElementById('test-panel').style.display = 'none';
-
-    // 3. フィードバック（正解・不正解の文字）をリセットしておく
-    document.getElementById('test-feedback').innerHTML = "";
-    document.getElementById('test-feedback').className = "";
-}
-
-// script.js の末尾に追加
-
-// ==========================================
-// ドラッグ＆ドロップの実装（シンプル版）
-// ==========================================
-
-let dragTarget = null;
-let drag_x_pos = 0, drag_y_pos = 0, drag_x_elem = 0, drag_y_elem = 0;
-
-document.addEventListener('mousedown', function(e) {
-    if (e.target.tagName === 'CANVAS') return;
-    // hotspot（ボタン）上のクリックはドラッグ開始しない
-    if (e.target.classList.contains('hotspot')) return;
-
-    // クリックされた要素から親の.draggable-equipmentを探す
-    const target = e.target.closest('.draggable-equipment');
-    if (!target) return;
-
-    dragTarget = target;
-    bringToFront(dragTarget);
-
-    drag_x_pos  = e.clientX;
-    drag_y_pos  = e.clientY;
-    drag_x_elem = dragTarget.offsetLeft;
-    drag_y_elem = dragTarget.offsetTop;
-
-    e.preventDefault();
-});
-
-document.addEventListener('mousemove', function(e) {
-    if (!dragTarget) return;
-    dragTarget.style.left = (drag_x_elem + e.clientX - drag_x_pos) + 'px';
-    dragTarget.style.top  = (drag_y_elem + e.clientY - drag_y_pos) + 'px';
-});
-
-document.addEventListener('mouseup', function() {
-    dragTarget = null;
-});
-
-function bringToFront(elm) {
-    document.querySelectorAll('.draggable-equipment').forEach(d => d.style.zIndex = 10);
-    elm.style.zIndex = 100;
-}
-
-function toggleSidebar() {
-    document.getElementById('equipment-sidebar').classList.toggle('open');
-}
-
-function toggleExperimentSidebar() {
-    document.getElementById('experiment-sidebar').classList.toggle('open');
-}
-
+// 実験手順（左サイドバーの項目をクリックしたときにモーダルに表示する内容。body はHTML）
 const EXPERIMENT_DATA = {
     exp1: {
         title: '手順1：AD変換器の変換過程の観察',
@@ -2382,7 +456,7 @@ const EXPERIMENT_DATA = {
                 <tr><td style="padding:6px 10px;border:1px solid #ddd;">直流電源 CH1(−)</td><td style="padding:6px 10px;border:1px solid #ddd;">AD/DA変換機</td><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;">TB2</td></tr>
                 <tr><td style="padding:6px 10px;border:1px solid #ddd;">AD/DA変換機 TP3</td><td style="padding:6px 10px;border:1px solid #ddd;">オシロスコープ</td><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;">Ch1（S/H制御信号）</td></tr>
                 <tr><td style="padding:6px 10px;border:1px solid #ddd;">AD/DA変換機 TP8</td><td style="padding:6px 10px;border:1px solid #ddd;">オシロスコープ</td><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;">Ch2（比較器出力）</td></tr>
-                <tr><td style="padding:6px 10px;border:1px solid #ddd;">AD/DA変換機 TP5</td><td style="padding:6px 10px;border:1px solid #ddd;">オシロスコープ</td><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;">Ch3（比較器出力）</td></tr>
+                <tr><td style="padding:6px 10px;border:1px solid #ddd;">AD/DA変換機 TP5</td><td style="padding:6px 10px;border:1px solid #ddd;">オシロスコープ</td><td style="padding:6px 10px;border:1px solid #ddd;font-weight:bold;">Ch3（逐次比較のDA出力）</td></tr>
             </table>
             <h4 style="margin:0 0 8px;color:#2c3e50;">【スイッチ設定】</h4>
             <ul style="margin:0 0 12px;padding-left:18px;">
@@ -2397,8 +471,13 @@ const EXPERIMENT_DATA = {
                 <li>CH1を使用し、出力電圧を <strong>5V</strong> にセット → OUTPUT ON</li>
                 <li>その後、電圧を数種類変えて繰り返す</li>
             </ul>
+            <h4 style="margin:0 0 8px;color:#2c3e50;">【測定】</h4>
+            <ul style="margin:0 0 16px;padding-left:18px;">
+                <li>AD/DA変換機の下の <strong>LED</strong> でデジタルコードを読み取って記録</li>
+                <li>オシロの <strong>Cursr</strong> を押して Y1 を選び、Ch3 を選択した状態で、TP5 の各段の電圧を読み取る</li>
+            </ul>
             <div style="background:#fff3cd;padding:10px 14px;border-radius:4px;font-size:13px;">
-                💡 TP3（S/H制御信号）は一定周期のパルス波形が観測されます。TP8・TP5（比較器出力）は逐次比較のビット列パターンが観測されます。
+                💡 TP3（S/H制御信号）は一定周期のパルス波形、TP8（比較器出力）は変換結果のビット列、TP5（逐次比較のDA出力）は入力電圧と比べる電圧が1ビットごとに階段状に変わる波形が観測されます。
             </div>
         `
     },
@@ -2414,13 +493,14 @@ const EXPERIMENT_DATA = {
             <ul style="margin:0 0 12px;padding-left:18px;">
                 <li>SW4を <strong>4ビット</strong> に設定</li>
                 <li>直流電源の出力電圧を <strong>0V〜10.20V</strong> まで段階的に変化</li>
-                <li>各電圧でのデジタルコード（2進数）を記録</li>
+                <li>各電圧でのデジタルコード（2進数）を、AD/DA変換機の下の <strong>LED</strong> から読み取って記録</li>
                 <li>グラフ：横軸＝入力電圧、縦軸＝デジタルコード（階段状になるはず）</li>
             </ul>
             <h4 style="margin:0 0 8px;color:#2c3e50;">【測定②】量子化ビット数 = 8bit</h4>
             <ul style="margin:0 0 12px;padding-left:18px;">
                 <li>SW4を <strong>8ビット</strong> に設定</li>
                 <li>直流電源の出力電圧を <strong>5.12V ± 5%</strong> 程度（約 4.86V〜5.38V）の範囲で変化</li>
+                <li>電圧ツマミをクリックして <strong>FINE（0.01V刻み）</strong> に切り替えると、コードが変わる境目を細かく追える</li>
                 <li>各電圧でのデジタルコードを記録し同様のグラフを作成</li>
             </ul>
             <div style="background:#fff3cd;padding:10px 14px;border-radius:4px;font-size:13px;">
@@ -2487,444 +567,402 @@ const EXPERIMENT_DATA = {
     }
 };
 
-function showExperiment(expId) {
-    const data = EXPERIMENT_DATA[expId];
-    if (!data) return;
-    document.getElementById('exp-modal-title').textContent = data.title;
-    document.getElementById('exp-modal-body').innerHTML = data.body;
-    const modal = document.getElementById('experiment-modal');
-    modal.style.display = 'block';
-    modal.style.pointerEvents = 'auto';
+
+// =======================================================================
+//  4. 画面レイアウト
+// =======================================================================
+
+// -----------------------------------------------------------------------
+//  オシロスコープの機種切替・説明書
+// -----------------------------------------------------------------------
+
+// オシロスコープの機種を切り替える（説明書を開いていた場合は閉じる）
+function switchModelUI(modelName) {
+    currentModelId = modelName;
+
+    // オシロの2機種のうち、選んだ方だけを表示する（直流電源などほかの機器には触らない）
+    document.querySelectorAll('#osc-container .instrument-container').forEach(el => {
+        el.style.display = (el.id === 'model-' + modelName) ? 'block' : 'none';
+    });
+    canvas = document.getElementById('canvas-' + modelName);
+    ctx = canvas.getContext('2d');
+
+    closeManual();
+    autoFit();       // 機種によって本体の大きさが違うので、画面に収まる倍率にし直す
+    redrawWires();   // オシロに繋いだ線を、新しい機種の端子に付け替える
 }
 
-function closeExperimentModal() {
-    const modal = document.getElementById('experiment-modal');
-    modal.style.display = 'none';
-    modal.style.pointerEvents = 'none';
+// 説明書を開く。
+// 開いている間は body に manual-open クラスを付け、機器とワイヤーをCSSで隠す（style.css 9章）。
+// 機器の表示状態・位置・倍率には触らないので、閉じればそのまま元の配置に戻る
+function showManual() {
+    document.body.classList.add('manual-open');
+    updateViewButtons();
 }
 
-// モーダル外クリックで閉じる
-document.addEventListener('click', function(e) {
-    const modal = document.getElementById('experiment-modal');
-    if (modal && e.target === modal) closeExperimentModal();
-});
+// 説明書を閉じて、開く前の画面に戻る
+function closeManual() {
+    document.body.classList.remove('manual-open');
+    updateViewButtons();
+    redrawWires();   // 開いている間にウィンドウの大きさなどが変わっていても、線を端子に合わせ直す
+}
 
+// コントロールパネルの「説明書」「Hantek」「Agilent」ボタンの選択表示を、現在の画面に合わせる
+function updateViewButtons() {
+    const isManualOpen = document.body.classList.contains('manual-open');
+    document.getElementById('btn-manual').classList.toggle('active', isManualOpen);
+    ['hantek', 'agilent'].forEach(model => {
+        document.getElementById('btn-model-' + model).classList.toggle('active', !isManualOpen && model === currentModelId);
+    });
+}
+
+// -----------------------------------------------------------------------
+//  ズーム・サイズ調整
+// -----------------------------------------------------------------------
+
+// 機器を scale 倍で表示し、ドラッグ用の外枠も表示サイズに合わせる
+function applyContainerScale(container, scale) {
+    container.style.transform = `scale(${scale})`;
+
+    const img = container.querySelector('img');
+    const wrapper = container.closest('.draggable-equipment');
+    if (img && wrapper) {
+        // 画像の下に状態表示バー（.status-strip）が付いている機器は、その高さも外枠に含める
+        const strip = container.querySelector('.status-strip');
+        const stripHeight = strip ? parseFloat(getComputedStyle(strip).height) : 0;
+        wrapper.style.width  = `${img.naturalWidth * scale}px`;
+        wrapper.style.height = `${(img.naturalHeight + stripHeight) * scale}px`;
+    }
+}
+
+// 全体の表示倍率を設定する [%]（VIEW SCALE）
+function setZoom(newZoom) {
+    if (newZoom < 20) newZoom = 20;
+    if (newZoom > 400) newZoom = 400;
+    currentZoom = Math.floor(newZoom);
+
+    const zoomDisplay = document.getElementById('zoom-display');
+    if (zoomDisplay) zoomDisplay.innerText = currentZoom + '%';
+
+    document.querySelectorAll('.instrument-container').forEach(container => {
+        if (container.style.display === 'none') return;   // 表示していない方のオシロの機種は対象外
+        const img = container.querySelector('img');
+        if (!img || img.naturalWidth === 0) return;       // 画像の読み込み前は何もしない
+        applyContainerScale(container, currentZoom / 100);
+    });
+
+    redrawWires();   // 機器の大きさが変わると端子の位置も変わるので、線を付け直す
+}
+
+function changeZoom(amount) {
+    setZoom(currentZoom + amount);
+}
+
+// 表示中のオシロスコープが画面に収まる倍率にする
+function autoFit() {
+    const img = document.querySelector('#model-' + currentModelId + ' img');
+    if (!img || img.naturalWidth === 0) return;
+
+    const stage = document.querySelector('.main-stage');
+    const availableWidth  = stage ? stage.clientWidth  : (window.innerWidth - 40);
+    const availableHeight = stage ? stage.clientHeight : (window.innerHeight - 180);
+
+    // 収まる倍率の 95%（少し余白を持たせる）。等倍より大きくはしない
+    const bestScale = Math.min(availableWidth / img.naturalWidth, availableHeight / img.naturalHeight);
+    let bestZoom = bestScale * 100 * 0.95;
+    if (bestZoom > 100) bestZoom = 100;
+    setZoom(bestZoom);
+}
+
+// SIZE ADJUST: プルダウンで機器を選び直したとき、スライダーをその機器の倍率に合わせる
+function updateSizeSliderDisplay() {
+    const targetId = document.getElementById('size-target-select').value;
+    const currentScale = instrumentScales[targetId] || 1.0;
+
+    document.getElementById('size-slider').value = currentScale;
+    document.getElementById('val-size-display').innerText = currentScale.toFixed(1) + 'x';
+}
+
+// SIZE ADJUST: スライダーの倍率を、選択中の機器だけに適用する
+function applySizeChange() {
+    const targetId = document.getElementById('size-target-select').value;
+    const scaleValue = parseFloat(document.getElementById('size-slider').value);
+
+    instrumentScales[targetId] = scaleValue;
+    document.getElementById('val-size-display').innerText = scaleValue.toFixed(1) + 'x';
+
+    const container = document.getElementById(targetId);
+    if (container) applyContainerScale(container, scaleValue);
+    redrawWires();
+}
+
+// -----------------------------------------------------------------------
+//  機器の表示切替・ドラッグ移動
+// -----------------------------------------------------------------------
+
+// 機器（'osc' | 'ps' | 'fg' | 'adda'）の表示 / 非表示を切り替える
 function toggleEquipment(eqId) {
     const container = document.getElementById(eqId + '-container');
     if (!container) return;
+
     if (container.style.display === 'none') {
         container.style.display = 'block';
         bringToFront(container);
-        // 表示したばかりのコンテナにも現在のズームを適用する
-        setZoom(currentZoom);
+        setZoom(currentZoom);   // 表示したばかりの機器にも現在のズームを適用する
     } else {
         container.style.display = 'none';
     }
 }
 
-function updatePSDisplay() {
-    const ids = ['disp-ch1-v', 'disp-ch1-a', 'disp-ch2-v', 'disp-ch2-a'];
-    const elements = ids.map(id => document.getElementById(id));
-    
-    // 要素が見つからない場合は中断
-    if (elements.some(el => !el)) return;
-
-    // 電源がOFFなら真っ暗にする
-    if (!psState.isOn) {
-        elements.forEach(el => el.textContent = "");
-        return;
-    }
-
-    // 電源ONなら数値を表示
-    document.getElementById('disp-ch1-v').textContent = psState.ch1.voltage.toFixed(2).padStart(5, '0');
-    document.getElementById('disp-ch1-a').textContent = psState.ch1.current.toFixed(3);
-    document.getElementById('disp-ch2-v').textContent = psState.ch2.voltage.toFixed(2).padStart(5, '0');
-    document.getElementById('disp-ch2-a').textContent = psState.ch2.current.toFixed(3);
+// 機器を最前面に出す
+function bringToFront(equipment) {
+    document.querySelectorAll('.draggable-equipment').forEach(d => d.style.zIndex = 10);
+    equipment.style.zIndex = 100;
 }
 
-// ==========================================
-// 発振器 (ファンクションジェネレータ) の制御
-// ==========================================
+function onDragStart(e) {
+    // 画面(canvas)とボタン(hotspot)の上ではドラッグを始めない
+    if (e.target.tagName === 'CANVAS') return;
+    if (e.target.classList.contains('hotspot')) return;
 
-// 発振器の内部状態を管理するオブジェクト
-let fgState = {
-    power: false,
-    waveform: 'SINE',  // SINE(正弦波), SQUARE(方形波), RAMP(三角波)
-    freq: 1000,        // 周波数 (Hz)
-    amptd: 1.0,        // 振幅 (Vpp)
-    offset: 0.0,       // オフセット (V)
-    outputOn: false,   // 出力ボタンのON/OFF
-    inputMode: '',     // 現在入力中の項目 ('FREQ', 'AMPTD', 'OFFSET')
-    inputValue: ''     // テンキーで入力中の文字列
-};
+    const target = e.target.closest('.draggable-equipment');
+    if (!target) return;
+
+    dragTarget = target;
+    bringToFront(dragTarget);
+    dragStart = { mouseX: e.clientX, mouseY: e.clientY, left: dragTarget.offsetLeft, top: dragTarget.offsetTop };
+    e.preventDefault();
+}
+
+function onDragMove(e) {
+    if (!dragTarget) return;
+    dragTarget.style.left = (dragStart.left + e.clientX - dragStart.mouseX) + 'px';
+    dragTarget.style.top  = (dragStart.top  + e.clientY - dragStart.mouseY) + 'px';
+    redrawWires();   // ワイヤーを機器の移動に追従させる
+}
+
+function onDragEnd() {
+    dragTarget = null;
+}
+
+// -----------------------------------------------------------------------
+//  サイドバー・実験手順
+// -----------------------------------------------------------------------
+
+function toggleSidebar() {
+    document.getElementById('equipment-sidebar').classList.toggle('open');
+}
+
+function toggleExperimentSidebar() {
+    document.getElementById('experiment-sidebar').classList.toggle('open');
+}
+
+// 実験手順をモーダルに表示する（内容は 3章の EXPERIMENT_DATA）
+function showExperiment(expId) {
+    const data = EXPERIMENT_DATA[expId];
+    if (!data) return;
+    document.getElementById('exp-modal-title').textContent = data.title;
+    document.getElementById('exp-modal-body').innerHTML = data.body;
+    document.getElementById('experiment-modal').style.display = 'block';
+}
+
+function closeExperimentModal() {
+    document.getElementById('experiment-modal').style.display = 'none';
+}
+
+// -----------------------------------------------------------------------
+//  コントロールパネル
+// -----------------------------------------------------------------------
+
+// オシロの入力の種類を切り替える（INPUT SOURCE ボタン）
+function switchInputSource(source) {
+    scopeState.inputSource = source;
+
+    // 内部テスト信号に戻すときは、結線していたときの信号を残さずテスト信号に戻す
+    if (source === 'internal') {
+        ALL_CHANNELS.forEach(ch => {
+            scopeState.signals[ch] = { ...INTERNAL_TEST_SIGNALS[ch] };
+        });
+    }
+
+    // ボタンの選択表示（'fg' のときはどちらも選択しない）
+    document.getElementById('btn-src-internal').classList.toggle('active', source === 'internal');
+    document.getElementById('btn-src-ps').classList.toggle('active', source === 'power_supply');
+}
+
+// --- 内部テスト信号の操作パネル（SIGNAL GEN） ---
+// ※ 現在の index.html にはこのパネルのボタン（id="btn-wave-sine" など）が無いため、
+//    下の3つの関数は画面から呼ばれていない。実技テスト第3問がこのパネルを前提にしている。
+
+// 選択中のチャンネルの波形の種類を変える ('sine' | 'square' | 'tri')
+function setWaveType(type) {
+    scopeState.signals[scopeState.activeChannel].type = type;
+    updateControlPanelUI();
+    if (scopeState.isOn) drawWaveform();
+}
+
+// 選択中のチャンネルの振幅を変える（0.5V〜10V）
+function changeSignalAmplitude(amount) {
+    const signal = scopeState.signals[scopeState.activeChannel];
+    signal.amplitude = Math.max(0.5, Math.min(10.0, signal.amplitude + amount));
+    if (scopeState.isOn) drawWaveform();
+}
+
+// 波形ボタンの選択表示を、選択中のチャンネルの信号に合わせる
+function updateControlPanelUI() {
+    const currentType = scopeState.signals[scopeState.activeChannel].type;
+    document.querySelectorAll('[id^="btn-wave-"]').forEach(btn => btn.classList.remove('active'));
+    const activeBtn = document.getElementById('btn-wave-' + currentType);
+    if (activeBtn) activeBtn.classList.add('active');
+}
+
 
 // =======================================================================
-//  AD/DA変換装置 (ITF-203B) の状態管理
+//  5. 信号の計算（ある時刻の電圧を求める）
 // =======================================================================
-const adDaState = {
-    power: true,           // 装置電源（常にON想定）
-    inputSource: 'fg',     // 入力ソース: 'fg'(発振器) or 'dc'(直流電源)　※表示上の既定値
-    resolution: 8,         // 量子化ビット数 (4 or 8)
-    samplingPeriodUs: 5,   // サンプリング周期 [µs] 選択肢: 5,10,50,100,200,500
-    FSR: 10.24,            // フルスケールレンジ [V] (実機ITF-203Bの仕様)
-    mode: 'bipolar',       // 'unipolar' or 'bipolar'
 
-    // 利用可能なサンプリング周期の選択肢 [µs]
-    samplingOptions: [5, 10, 50, 100, 200, 500],
-
-    // TB1（信号入力端子）に実際に結線されている機器: 'dc' | 'fg' | null
-    // 実機同様、ここに何も結線されていない場合は入力信号が無いものとして扱う
-    tb1Wired: null,
-};
-
-// AD/DA変換装置パネルのUIを作成する関数
-function createAdDaPanel() {
-    // 既存があれば削除
-    const existing = document.getElementById('adda-panel');
-    if (existing) existing.remove();
-
-    const panel = document.createElement('div');
-    panel.id = 'adda-panel';
-    panel.style.cssText = `
-        position: fixed;
-        top: 80px;
-        right: 20px;
-        width: 280px;
-        background: #1a1a2e;
-        border: 2px solid #4a90e2;
-        border-radius: 10px;
-        padding: 15px;
-        color: white;
-        font-family: 'Courier New', monospace;
-        z-index: 800;
-        box-shadow: 0 0 20px rgba(74, 144, 226, 0.4);
-    `;
-
-    panel.innerHTML = `
-        <div style="text-align:center; margin-bottom:10px;">
-            <span style="font-size:14px; font-weight:bold; color:#4a90e2;">AD/DA変換装置 (ITF-203B)</span>
-        </div>
-        
-        <div style="background:#0d0d1a; padding:8px; border-radius:5px; margin-bottom:10px; font-size:12px; line-height:1.6;">
-            <div style="color:#00ff88;">▶ サンプリング周波数: <span id="adda-fs">200 kHz</span></div>
-            <div style="color:#ffaa00;">▶ 量子化ビット数: <span id="adda-bits">8 bit</span></div>
-            <div style="color:#ff88aa;">▶ 量子化ステップ: <span id="adda-step">0.04 V</span></div>
-            <div style="color:#88aaff;">▶ 入力: <span id="adda-input-src">発振器(FG)</span></div>
-        </div>
-
-        <div style="margin-bottom:8px;">
-            <label style="font-size:11px; color:#aaa;">サンプリング周期 (SW4):</label>
-            <select id="adda-sampling" onchange="onAdDaSamplingChange(this.value)" 
-                style="width:100%; background:#2a2a4a; color:white; border:1px solid #4a90e2; 
-                       padding:4px; border-radius:4px; margin-top:4px;">
-                <option value="5">5 µs (fs=200kHz)</option>
-                <option value="10">10 µs (fs=100kHz)</option>
-                <option value="50">50 µs (fs=20kHz)</option>
-                <option value="100">100 µs (fs=10kHz)</option>
-                <option value="200">200 µs (fs=5kHz)</option>
-                <option value="500">500 µs (fs=2kHz)</option>
-            </select>
-        </div>
-
-        <div style="margin-bottom:8px;">
-            <label style="font-size:11px; color:#aaa;">量子化ビット数 (SW4):</label>
-            <div style="display:flex; gap:8px; margin-top:4px;">
-                <button onclick="onAdDaBitsChange(4)" id="adda-btn-4bit"
-                    style="flex:1; background:#2a2a4a; color:white; border:1px solid #4a90e2; 
-                           padding:5px; border-radius:4px; cursor:pointer;">4 bit</button>
-                <button onclick="onAdDaBitsChange(8)" id="adda-btn-8bit"
-                    style="flex:1; background:#4a90e2; color:white; border:1px solid #4a90e2; 
-                           padding:5px; border-radius:4px; cursor:pointer; font-weight:bold;">8 bit</button>
-            </div>
-        </div>
-
-        <div style="margin-bottom:8px;">
-            <label style="font-size:11px; color:#aaa;">入力接続:</label>
-            <div style="display:flex; gap:8px; margin-top:4px;">
-                <button onclick="onAdDaSourceChange('fg')" id="adda-btn-fg"
-                    style="flex:1; background:#4a90e2; color:white; border:1px solid #4a90e2; 
-                           padding:5px; border-radius:4px; cursor:pointer; font-weight:bold; font-size:11px;">発振器(FG)</button>
-                <button onclick="onAdDaSourceChange('dc')" id="adda-btn-dc"
-                    style="flex:1; background:#2a2a4a; color:white; border:1px solid #4a90e2; 
-                           padding:5px; border-radius:4px; cursor:pointer; font-size:11px;">直流電源</button>
-            </div>
-        </div>
-
-        <div style="background:#0d0d1a; padding:8px; border-radius:5px; font-size:11px; color:#888; line-height:1.5;">
-            <div>💡 CH1: DA変換出力（オシロCH1へ）</div>
-            <div>💡 CH2: 入力原波形（オシロCH2へ）</div>
-        </div>
-    `;
-
-    document.body.appendChild(panel);
-    updateAdDaPanelDisplay();
+// 振幅1・オフセット0の基本波形の値（-1〜1）
+function waveShape(type, phase) {
+    if (type === 'sine')   return Math.sin(phase);
+    if (type === 'square') return Math.sin(phase) >= 0 ? 1 : -1;
+    if (type === 'tri')    return (2 / Math.PI) * Math.asin(Math.sin(phase));
+    return 0;   // 'flat' など
 }
 
-// AD/DA変換装置パネルの表示を更新
-function updateAdDaPanelDisplay() {
-    const fsHz = 1000000 / adDaState.samplingPeriodUs;
-    const fsText = fsHz >= 1000 ? (fsHz/1000).toFixed(0) + ' kHz' : fsHz + ' Hz';
-    const q = adDaState.FSR / Math.pow(2, adDaState.resolution);
-
-    const el_fs = document.getElementById('adda-fs');
-    const el_bits = document.getElementById('adda-bits');
-    const el_step = document.getElementById('adda-step');
-    const el_src = document.getElementById('adda-input-src');
-
-    if (el_fs) el_fs.textContent = fsText;
-    if (el_bits) el_bits.textContent = adDaState.resolution + ' bit';
-    if (el_step) el_step.textContent = q.toFixed(4) + ' V';
-    if (el_src) el_src.textContent = adDaState.inputSource === 'fg' ? '発振器(FG)' : '直流電源';
+// 基本波形 × 振幅 だけの電圧（オフセットは含まない）
+// 内部テスト信号の表示と、トリガの判定に使う
+function getBaseWaveVoltage(ch, t) {
+    const signal = scopeState.signals[ch];
+    return waveShape(signal.type, 2 * Math.PI * signal.frequency * t) * signal.amplitude;
 }
 
-// サンプリング周期変更
-function onAdDaSamplingChange(val) {
-    adDaState.samplingPeriodUs = parseInt(val);
-    updateAdDaPanelDisplay();
-    showWireStatus(`サンプリング周期: ${val} µs に変更しました`);
+// 結線された信号のアナログ電圧（オフセット込み。AD変換の階段状の信号にも対応）
+function getAnalogVoltage(ch, t) {
+    const signal = scopeState.signals[ch];
+    if (!signal) return 0;
+
+    if (signal.type === 'sequence') return getSequenceVoltage(signal, t);
+
+    const freq = signal.frequency || 1;
+    const amp  = signal.amplitude || 0;
+    return waveShape(signal.type, 2 * Math.PI * freq * t) * amp + (signal.offset || 0);
 }
 
-// 量子化ビット数変更
-function onAdDaBitsChange(bits) {
-    adDaState.resolution = bits;
-    document.getElementById('adda-btn-4bit').style.background = bits === 4 ? '#4a90e2' : '#2a2a4a';
-    document.getElementById('adda-btn-4bit').style.fontWeight = bits === 4 ? 'bold' : 'normal';
-    document.getElementById('adda-btn-8bit').style.background = bits === 8 ? '#4a90e2' : '#2a2a4a';
-    document.getElementById('adda-btn-8bit').style.fontWeight = bits === 8 ? 'bold' : 'normal';
-    updateAdDaPanelDisplay();
-    showWireStatus(`量子化ビット数: ${bits} bit に変更しました`);
+// 逐次比較型AD変換器の内部信号（TP3: サンプル/ホールド信号、TP5: DA出力、TP8: 比較器出力）の電圧
+//   signal.levels : 1サンプリング周期の中に並ぶ電圧 [V]
+//   signal.tsSec  : サンプリング周期 [s]。この中を levels の個数で等分し、周期ごとに繰り返す
+function getSequenceVoltage(signal, t) {
+    const ts = signal.tsSec;
+    const levels = signal.levels;
+    if (!ts || !levels || levels.length === 0) return 0;
+
+    // 周期の中での位置（負の時刻にも対応）
+    let tt = t % ts;
+    if (tt < 0) tt += ts;
+
+    const idx = Math.min(Math.floor(tt / (ts / levels.length)), levels.length - 1);
+    return levels[idx];
 }
 
-// 入力ソース変更
-function onAdDaSourceChange(src) {
-    adDaState.inputSource = src;
-    document.getElementById('adda-btn-fg').style.background = src === 'fg' ? '#4a90e2' : '#2a2a4a';
-    document.getElementById('adda-btn-fg').style.fontWeight = src === 'fg' ? 'bold' : 'normal';
-    document.getElementById('adda-btn-dc').style.background = src === 'dc' ? '#4a90e2' : '#2a2a4a';
-    document.getElementById('adda-btn-dc').style.fontWeight = src === 'dc' ? 'bold' : 'normal';
-    updateAdDaPanelDisplay();
+// 電圧を量子化する（AD → DA 変換後の電圧）
+//   adda: { resolution, FSR, mode }
+function quantizeVoltage(rawVolt, adda) {
+    const q = adda.FSR / Math.pow(2, adda.resolution);   // 量子化ステップ [V]
 
-    // オシロの入力ソースも自動切替
-    if (src === 'dc') {
-        switchInputSource('power_supply');
-    } else {
-        switchInputSource('fg');
-    }
-}
-
-// マップのエリアがクリックされたときの処理
-function handleFgButton(btnId) {
-    // 1. 電源ボタンの処理
-    if (btnId === 'latorpowar') {
-        fgState.power = !fgState.power;
-        if (!fgState.power) {
-            fgState.outputOn = false; // 電源OFFで出力も切る
-            fgState.inputMode = '';
-            fgState.inputValue = '';
-        }
-        updateFgDisplay();
-        return;
+    if (adda.mode === 'unipolar') {
+        const clipped = Math.max(0, Math.min(adda.FSR - q, rawVolt));
+        return Math.round(clipped / q) * q;
     }
 
-    // 電源が入っていない場合は他のボタンは反応しない
-    if (!fgState.power) return;
+    const halfFSR = adda.FSR / 2;
+    const clipped = Math.max(-halfFSR, Math.min(halfFSR - q, rawVolt));
+    return Math.round(clipped / q) * q;
+}
 
-    // 2. テンキー入力処理
-    const numMap = { 'zero':'0', 'one':'1', 'two':'2', 'three':'3', 'fore':'4', 'five':'5', 'six':'6', 'seven':'7', 'eight':'8', 'nine':'9' };
-    
-    if (numMap[btnId]) {
-        if (fgState.inputMode) fgState.inputValue += numMap[btnId];
-    } else if (btnId === 'dot') {
-        if (fgState.inputMode && !fgState.inputValue.includes('.')) {
-            fgState.inputValue += '.';
-        }
-    } else if (btnId === 'puramai') {
-        if (fgState.inputMode) {
-            if (fgState.inputValue.startsWith('-')) {
-                fgState.inputValue = fgState.inputValue.substring(1); // マイナスを外す
-            } else {
-                fgState.inputValue = '-' + fgState.inputValue; // マイナスをつける
+// DA出力の電圧（標本化＋量子化した階段状の波形）
+function getDaOutputVoltage(ch, t) {
+    const adda = scopeState.signals[ch].adda;
+    const ts = adda.samplingPeriodUs * 1e-6;        // サンプリング周期 [s]
+    const sampleTime = Math.floor(t / ts) * ts;     // 直前のサンプリング時刻（サンプル＆ホールド）
+    return quantizeVoltage(getAnalogVoltage(ch, sampleTime), adda);
+}
+
+// 直流電源の端子の電圧（電源OFF・出力OFFのときは0V）
+function getPsTerminalVoltage(psTerminal) {
+    if (!psState.isOn || !psState.isOutputOn) return 0;
+    if (psTerminal === 'ch1pura') return psState.ch1.voltage;
+    if (psTerminal === 'ch1mai')  return -psState.ch1.voltage;
+    if (psTerminal === 'ch2pura') return psState.ch2.voltage;
+    if (psTerminal === 'ch2mai')  return -psState.ch2.voltage;
+    return 0;
+}
+
+// オシロのチャンネル ch に、時刻 t で入力されている電圧
+function getChannelVoltage(ch, t) {
+    // 直流電源を直結: 繋がっている端子の電圧をそのまま表示
+    if (scopeState.inputSource === 'power_supply') {
+        const conn = getOscChannelConnection(ch);
+        return conn ? getPsTerminalVoltage(conn.psTerminal) : 0;
+    }
+
+    // 発振器 / AD/DA変換機を結線: 線が繋がっていないチャンネルは必ず0V
+    if (scopeState.inputSource === 'fg') {
+        if (!getOscChannelConnection(ch)) return 0;
+        const signal = scopeState.signals[ch];
+        if (signal.source === 'adda' && signal.adda) return getDaOutputVoltage(ch, t);
+        if (signal.source === 'fg' || signal.source === 'fg_wire') return getAnalogVoltage(ch, t);
+        return getBaseWaveVoltage(ch, t);
+    }
+
+    // 内部テスト信号
+    return getBaseWaveVoltage(ch, t);
+}
+
+// トリガがかかる時刻（波形がトリガレベルを立ち上がりで横切る瞬間）を探す。
+// 見つかればその時刻を返して波形を静止させ、見つからなければ現在時刻を返して波形を流す。
+function calculateTriggerOffset() {
+    const { source, level, slope } = scopeState.trigger;
+    const signal = scopeState.signals[source];
+    if (!signal) return scopeState.timeOffset;
+
+    // 判定に使う電圧と周期
+    //   AD変換の階段状の信号（ビット列など）… 実際の電圧と、その繰り返し周期
+    //   それ以外                           … 基本波形（オフセットは考慮されない）と、その周期
+    const isSequence = (signal.type === 'sequence');
+    const period = isSequence ? signal.tsSec : 1.0 / signal.frequency;
+    const voltageAt = t => isSequence ? getSequenceVoltage(signal, t) : getBaseWaveVoltage(source, t);
+
+    // 現在時刻から過去へ2周期分を、1周期あたり100分割して調べる
+    const steps = 100;
+    const dt = period / steps;
+    const baseTime = scopeState.timeOffset;
+
+    for (let i = 0; i < steps * 2; i++) {
+        let after  = baseTime - (i * dt);         // 区間の新しい側の時刻
+        let before = baseTime - ((i + 1) * dt);   // 区間の古い側の時刻
+
+        if (slope === 'rising' && voltageAt(before) < level && voltageAt(after) >= level) {
+            // 区間を半分ずつ狭めて、横切る瞬間を正確に求める（毎フレーム同じ位置で止めるため）
+            for (let k = 0; k < 30; k++) {
+                const mid = (before + after) / 2;
+                if (voltageAt(mid) >= level) after = mid;
+                else before = mid;
             }
-        }
-    } 
-    // 3. キャンセル・取り消し
-    else if (btnId === 'cansel' || btnId === 'undo') {
-        fgState.inputValue = ''; // 入力中の値をクリア
-    } 
-    // 4. Enterキー (入力値の確定)
-    else if (btnId === 'enter') {
-        if (fgState.inputMode && fgState.inputValue !== '') {
-            let val = parseFloat(fgState.inputValue);
-            if (!isNaN(val)) {
-                if (fgState.inputMode === 'FREQ') {
-                    fgState.freq = Math.max(0.001, Math.min(2000000, val));
-                }
-                if (fgState.inputMode === 'AMPTD') {
-                    fgState.amptd = Math.max(0.001, Math.min(10.0, val));
-                }
-                if (fgState.inputMode === 'OFFSET') {
-                    fgState.offset = Math.max(-5.0, Math.min(5.0, val));
-                }
-            }
-        }
-        // 確定したら入力モードを解除
-        fgState.inputMode = '';
-        fgState.inputValue = '';
-    } 
-    // 5. 波形切り替え (fctn)
-    else if (btnId === 'fctn') {
-        const waves = ['SINE', 'SQUARE', 'RAMP'];
-        let currentIndex = waves.indexOf(fgState.waveform);
-        fgState.waveform = waves[(currentIndex + 1) % waves.length];
-        showWireStatus(`波形: ${fgState.waveform} に切替`);
-    } 
-    // 6. パラメータ選択 (周波数、振幅、オフセット)
-    else if (btnId === 'freq') {
-        fgState.inputMode = 'FREQ';
-        fgState.inputValue = '';
-    } else if (btnId === 'amptd') {
-        fgState.inputMode = 'AMPTD';
-        fgState.inputValue = '';
-    } else if (btnId === 'offset') {
-        fgState.inputMode = 'OFFSET';
-        fgState.inputValue = '';
-    } 
-    // 7. 出力ON/OFF切替
-    else if (btnId === 'out') {
-        fgState.outputOn = !fgState.outputOn;
-        if (fgState.outputOn) {
-            // 出力ONになったらオシロを自動起動
-            if (!scopeState.isOn) {
-                scopeState.isOn = true;
-                scopeState.isRunning = true;
-            }
-            // FGワイヤー接続がある場合はワイヤー経由で信号更新
-            const hasFgWire = wiringState.connections.some(c => c.type === 'fg');
-            if (hasFgWire) {
-                updateFgWireSignal();
-            } else {
-                // AD/DA入力ソースをFGに切替（ワイヤーなしの旧来動作）
-                adDaState.inputSource = 'fg';
-                const btnFg = document.getElementById('adda-btn-fg');
-                const btnDc = document.getElementById('adda-btn-dc');
-                if (btnFg) { btnFg.style.background = '#4a90e2'; btnFg.style.fontWeight = 'bold'; }
-                if (btnDc) { btnDc.style.background = '#2a2a4a'; btnDc.style.fontWeight = 'normal'; }
-            }
-            showWireStatus('📡 発振器 OUTPUT ON');
-        } else {
-            updateFgWireSignal(); // 出力OFFになったら接続先もフラットにする
-            showWireStatus('🔇 発振器 OUTPUT OFF');
+            scopeState.trigger.isTriggered = true;
+            return after;
         }
     }
 
-    // 表示を更新
-    updateFgDisplay();
+    scopeState.trigger.isTriggered = false;
+    return scopeState.timeOffset;
 }
 
-// 画面表示を更新する関数
-function updateFgDisplay() {
-    const display = document.getElementById('fg-display');
-    
-    // 電源OFFの場合は画面を消す
-    if (!fgState.power) {
-        display.classList.remove('fg-display-on');
-        updateFgToOscilloscope(); // 出力が切れたのでオシロも更新
-        return;
-    }
-    display.classList.add('fg-display-on');
-
-    // 周波数の表示を整形
-    let freqText = fgState.freq >= 1000 
-        ? (fgState.freq/1000).toFixed(3) + ' kHz' 
-        : fgState.freq.toFixed(1) + ' Hz';
-
-    // 画面に現在の数値を反映
-    document.getElementById('fg-disp-wave').innerText = `WAVE: ${fgState.waveform}`;
-    document.getElementById('fg-disp-freq').innerText = `FREQ: ${freqText}`;
-    document.getElementById('fg-disp-amptd').innerText = `AMP: ${fgState.amptd.toFixed(3)} Vpp`;
-    document.getElementById('fg-disp-offset').innerText = `OFS: ${fgState.offset.toFixed(2)} V`;
-    document.getElementById('fg-disp-out').innerText = fgState.outputOn ? 'OUTPUT: ON ▶' : 'OUTPUT: OFF';
-    
-    // 入力中の文字があれば表示、なければ空
-    if (fgState.inputMode) {
-        document.getElementById('fg-disp-input').innerText = `[入力中] ${fgState.inputMode} > ${fgState.inputValue}_`;
-    } else {
-        document.getElementById('fg-disp-input').innerText = '';
-    }
-
-    // オシロスコープへの信号を更新
-    updateFgToOscilloscope();
-    // FGワイヤー接続があれば、そちらも更新
-    if (typeof updateFgWireSignal === 'function') updateFgWireSignal();
-}
-
-// =======================================================================
-//  発振器 → オシロスコープ 信号連携
-// =======================================================================
-function updateFgToOscilloscope() {
-    // 発振器がAD/DA変換機のTB1に結線されている場合は、
-    // チャンネルへの信号書き込みをここでは行わない。
-    // （updateAdDaTerminalSignals() が端子ごとに正確に担当するため、
-    //   ここで書くと「未結線のCH2にも勝手に信号が出る」バグの原因になる）
-    const hasFgAddaConn = wiringState.connections.some(c => c.type === 'fg-adda');
-    if (hasFgAddaConn) return;
-
-    // 発振器がONかつ出力ONの場合のみオシロに信号を送る
-    if (fgState.power && fgState.outputOn && adDaState.inputSource === 'fg') {
-        // 波形タイプをscope形式に変換
-        const waveMap = { 'SINE': 'sine', 'SQUARE': 'square', 'RAMP': 'tri' };
-        const waveType = waveMap[fgState.waveform] || 'sine';
-        const amplitude = fgState.amptd / 2; // Vpp → 振幅(片側)
-
-        // CH2 = 入力原波形として設定
-        scopeState.signals['CH2'] = {
-            type: waveType,
-            amplitude: amplitude,
-            frequency: fgState.freq,
-            offset: fgState.offset,
-            source: 'fg'
-        };
-
-        // CH1 = AD/DA変換後の波形として設定
-        scopeState.signals['CH1'] = {
-            type: waveType,
-            amplitude: amplitude,
-            frequency: fgState.freq,
-            offset: fgState.offset,
-            source: 'adda', // AD/DA変換モード
-            adda: {
-                resolution: adDaState.resolution,
-                samplingPeriodUs: adDaState.samplingPeriodUs,
-                FSR: adDaState.FSR
-            }
-        };
-
-        // オシロの入力ソースを 'fg' モードに
-        if (scopeState.inputSource !== 'fg') {
-            scopeState.inputSource = 'fg';
-        }
-
-        // 時間軸を自動調整（波形が見やすくなるように）
-        autoAdjustTimeAxis(fgState.freq);
-
-    } else {
-        // 出力OFFの場合はフラットライン
-        if (scopeState.inputSource === 'fg') {
-            scopeState.signals['CH1'] = { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg' };
-            scopeState.signals['CH2'] = { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg' };
-        }
-    }
-}
-
-// 発振器の周波数に合わせて時間軸を自動調整
+// 信号の周波数に合わせて、約2.5周期が画面（10div）に収まるよう時間軸を選ぶ
 function autoAdjustTimeAxis(freq) {
     if (!scopeState.isOn) return;
-    
-    const period = 1.0 / freq; // 1周期の時間 [s]
-    // 約2〜3周期が画面に収まるようにする (画面は10div分)
-    const targetTimeDiv = (period * 2.5) / 10;
-    
-    // TIME_STEPSの中で最も近いインデックスを探す
+
+    const targetTimeDiv = ((1.0 / freq) * 2.5) / 10;
+
     let bestIndex = 0;
     let bestDiff = Infinity;
     TIME_STEPS.forEach((step, i) => {
@@ -2934,206 +972,715 @@ function autoAdjustTimeAxis(freq) {
             bestIndex = i;
         }
     });
-    
     scopeState.timeIndex = bestIndex;
 }
 
-// =======================================================================
-//  AD/DA変換シミュレーション: AD/DA変換後の電圧値を計算
-// =======================================================================
-function getAdDaVoltage(rawVolt, adda) {
-    const { resolution, FSR, samplingPeriodUs } = adda;
-    const n = resolution;
-    const q = FSR / Math.pow(2, n); // 量子化ステップ
-
-    // バイポーラモード（実験はバイポーラ想定）
-    const halfFSR = FSR / 2;
-
-    // クリッピング（入力範囲超えは飽和）
-    let clipped = Math.max(-halfFSR, Math.min(halfFSR, rawVolt));
-
-    // 量子化: q単位に丸める
-    const quantized = Math.round(clipped / q) * q;
-
-    return quantized;
-}
-
-// AD/DA変換後の波形の電圧値を取得（サンプリングも考慮）
-function getAdDaSignalVoltage(ch, signalTime, pixelX) {
-    const signal = scopeState.signals[ch];
-    if (!signal || !signal.adda) return 0;
-
-    const adda = signal.adda;
-    const samplingPeriodSec = adda.samplingPeriodUs * 1e-6; // µs → s
-
-    // 現在のピクセルが属するサンプリング区間の先頭時刻を計算
-    // これによりサンプル＆ホールド（階段状）波形を再現
-    const sampleTime = Math.floor(signalTime / samplingPeriodSec) * samplingPeriodSec;
-
-    // サンプリング時点での原信号の電圧
-    const rawVolt = getSignalVoltageRaw(ch, sampleTime);
-
-    // AD/DA変換（量子化）
-    return getAdDaVoltage(rawVolt, adda);
-}
-
-// 生の信号電圧を取得するヘルパー（AD/DA変換前の原信号）
-function getSignalVoltageRaw(ch, t) {
-    const signal = scopeState.signals[ch];
-    if (!signal) return 0;
-
-    // ★逐次比較AD変換器のビット列出力（サンプル/ホールド信号・比較器出力TP5/TP8など）
-    //   入力電圧に応じて実際に変化するデジタルパターンを再現する
-    if (signal.type === 'sarcode') {
-        return getSarBitsVoltage(signal, t);
-    }
-    
-    const freq = signal.frequency || 1;
-    const amp  = signal.amplitude || 0;
-    const phase = 2 * Math.PI * freq * t;
-    
-    let val = 0;
-    if (signal.type === 'sine') {
-        val = Math.sin(phase);
-    } else if (signal.type === 'square') {
-        val = Math.sin(phase) >= 0 ? 1 : -1;
-    } else if (signal.type === 'tri') {
-        val = (2 / Math.PI) * Math.asin(Math.sin(phase));
-    } else if (signal.type === 'flat') {
-        val = 0;
-    }
-    
-    return val * amp + (signal.offset || 0);
-}
 
 // =======================================================================
-// 逐次比較型AD変換器のビット列波形（TP3: サンプル/ホールド信号, TP5/TP8: 比較器出力）
+//  6. オシロスコープの描画
 // =======================================================================
-// signal.bits: [先頭ビット, ...変換ビット(MSB→LSB)..., 末尾ビット] のようなビット配列(0/1)
-// signal.tsSec: サンプリング周期 [秒]。この周期内で bits を等分割し、周期的に繰り返す。
-// signal.low / signal.high: 論理0/1に対応する電圧
-function getSarBitsVoltage(signal, t) {
-    const ts = signal.tsSec;
-    const bits = signal.bits;
-    if (!ts || !bits || bits.length === 0) return 0;
 
-    // tを[0, ts)の範囲に正規化（負の時刻・複数周期にも対応）
-    let tt = t % ts;
-    if (tt < 0) tt += ts;
+// 画面全体を描く（毎フレーム animationLoop から呼ばれる）
+function drawWaveform() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const slotDur = ts / bits.length;
-    let idx = Math.floor(tt / slotDur);
-    if (idx < 0) idx = 0;
-    if (idx >= bits.length) idx = bits.length - 1;
-
-    const low  = (signal.low  !== undefined) ? signal.low  : 0;
-    const high = (signal.high !== undefined) ? signal.high : 5;
-
-    return bits[idx] ? high : low;
-}
-
-// 逐次比較の結果コードから、比較器出力のビット列（先頭に変換開始マーカー、
-// 末尾に変換終了マーカーの計2ビットを付加）を作る。
-// PDFの考察事項①「比較器出力にはAD変換結果のビット列に加えて2ビット付加されている」を再現する。
-function buildSarOutputBits(code, resolution) {
-    const bits = [1]; // 変換開始マーカー（S/H制御と同期する立ち上がり）
-    for (let i = resolution - 1; i >= 0; i--) {
-        bits.push((code >> i) & 1); // MSBから順にビットを出力
-    }
-    bits.push(0); // 変換終了(EOC)マーカー
-    return bits;
-}
-
-// サンプル/ホールド制御信号（TP3）: 各周期の先頭で短いパルス（サンプル）→残りはHOLD(0)
-function buildSarSyncBits(resolution) {
-    const total = resolution + 2; // 比較器出力と同じ周期構造に揃えて時間軸を対応させる
-    const bits = new Array(total).fill(0);
-    bits[0] = 1;
-    return bits;
-}
-
-// AD/DA変換装置が接続されているかを確認して適切な電圧を返す
-function getOscilloscopeVoltage(ch, signalTime, pixelX) {
-    const signal = scopeState.signals[ch];
-    if (!signal) return 0;
-
-    // AD/DA変換モード（CH1がDA出力, CH2が原波形）
-    if (signal.source === 'adda' && signal.adda) {
-        // サンプリングと量子化を適用
-        return getAdDaSignalVoltage(ch, signalTime, pixelX);
-    }
-    
-    // 原波形モード（CH2 = 発振器直結）またはFGワイヤー接続
-    if (signal.source === 'fg' || signal.source === 'fg_wire') {
-        return getSignalVoltageRaw(ch, signalTime);
-    }
-
-    // 従来の内部テスト信号
-    return getSignalVoltage(ch, signalTime);
-}
-
-// =======================================================================
-//  AD/DA converter photo controls (ITF-203B)
-//  The old floating control panel is intentionally replaced by overlays on
-//  the real equipment image.
-// =======================================================================
-function createAdDaPanel() {
-    const oldPanel = document.getElementById('adda-panel');
-    if (oldPanel) oldPanel.remove();
-
-    const model = document.getElementById('model-adda');
-    if (!model || document.getElementById('adda-photo-ui')) {
-        updateAdDaPanelDisplay();
+    // 電源OFFなら真っ暗にして終了
+    if (!scopeState.isOn) {
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         return;
     }
 
-    const overlay = document.createElement('div');
-    overlay.id = 'adda-photo-ui';
-    overlay.innerHTML = `
-        <div id="adda-sampling-hotspot" class="adda-invisible-hotspot" title="サンプリング周期切換"></div>
-    `;
+    ctx.textBaseline = 'middle';   // 画面内の文字はすべて上下中央基準で描く
 
-    model.appendChild(overlay);
+    drawGrid();
+    drawChannelTraces();
+    drawTriggerLevel();
+    drawScaleReadout();
+    drawAdDaInfo();
+    drawTriggerStatus();
+    drawMenu();
+    drawMeasurePanel();
+    drawCursors();
+}
 
-    const samplingHotspot = document.getElementById('adda-sampling-hotspot');
-    if (samplingHotspot) {
-        samplingHotspot.addEventListener('click', e => {
-            e.stopPropagation();
-            cycleAdDaSampling();
-        });
-        samplingHotspot.addEventListener('wheel', e => {
-            e.preventDefault();
-            e.stopPropagation();
-            cycleAdDaSampling(e.deltaY < 0 ? -1 : 1);
-        });
+// 背景の目盛り線
+function drawGrid() {
+    ctx.strokeStyle = 'rgba(0, 255, 0, 0.6)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < canvas.width; x += PIXELS_PER_DIV) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+    }
+    for (let y = 0; y < canvas.height; y += PIXELS_PER_DIV) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+    }
+}
+
+// 各チャンネルの波形
+function drawChannelTraces() {
+    const timeDiv = TIME_STEPS[scopeState.timeIndex];
+    const centerY = canvas.height / 2;
+
+    // 画面中央をトリガ点（時刻0）にするための補正
+    const triggerTime = calculateTriggerOffset();
+    const centerTimeShift = (canvas.width / 2 / PIXELS_PER_DIV) * timeDiv;
+
+    (MODEL_CHANNELS[currentModelId] || ['CH1', 'CH2']).forEach(ch => {
+        const signal = scopeState.signals[ch];
+        const voltDiv = VOLT_STEPS[scopeState['voltIndex' + ch]];
+
+        // 外部入力モードで線が繋がっていないチャンネルは、signals の内容に関係なく0Vで描く
+        const isUnwired = (scopeState.inputSource === 'fg') && !getOscChannelConnection(ch);
+
+        // 信号のオフセット（AC結合のチャンネルでは見えない）＋ 位置ツマミによる上下移動
+        const signalOffset = (CHANNEL_COUPLING[ch] === 'AC' || isUnwired) ? 0 : (signal.offset || 0);
+        const offsetPx = ((signalOffset / voltDiv) * PIXELS_PER_DIV) + scopeState['position' + ch];
+
+        ctx.beginPath();
+        ctx.strokeStyle = CHANNEL_COLORS[ch];
+        ctx.lineWidth = 2;
+
+        // 2pxごとに、その位置の時刻の電圧を求めて線で結ぶ
+        for (let x = 0; x < canvas.width; x += 2) {
+            const timeSpan = (x / PIXELS_PER_DIV) * timeDiv;
+            const signalTime = timeSpan + triggerTime - centerTimeShift;
+            const volt = getChannelVoltage(ch, signalTime);
+
+            // canvas は下向きが正なので、電圧が高いほど y を小さくする
+            const y = centerY - (volt / voltDiv * PIXELS_PER_DIV) - offsetPx;
+            if (x === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    });
+}
+
+// トリガレベルの点線と、右端の「T」マーカー（CH1の電圧レンジ基準）
+function drawTriggerLevel() {
+    const voltDiv = VOLT_STEPS[scopeState.voltIndexCH1];
+    const trigY = canvas.height / 2 - (scopeState.trigger.level / voltDiv) * PIXELS_PER_DIV;
+
+    // 点線
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(255, 165, 0, 0.7)';
+    ctx.setLineDash([5, 5]);
+    ctx.lineWidth = 1;
+    ctx.moveTo(0, trigY);
+    ctx.lineTo(canvas.width, trigY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // マーカー（左向きの矢印形）
+    const markerWidth = 24;
+    const markerHeight = 18;
+    const markerX = canvas.width;
+
+    ctx.beginPath();
+    ctx.fillStyle = 'rgba(255, 165, 0, 1)';
+    ctx.moveTo(markerX - markerWidth, trigY);
+    ctx.lineTo(markerX - (markerWidth * 0.4), trigY - (markerHeight / 2));
+    ctx.lineTo(markerX, trigY - (markerHeight / 2));
+    ctx.lineTo(markerX, trigY + (markerHeight / 2));
+    ctx.lineTo(markerX - (markerWidth * 0.4), trigY + (markerHeight / 2));
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = 'black';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('T', markerX - (markerWidth * 0.25), trigY + 1);
+}
+
+// 画面下端の表示（各チャンネルの電圧レンジと時間軸）
+function drawScaleReadout() {
+    const y = canvas.height - 20;
+    const isExternal = (scopeState.inputSource === 'fg');
+
+    // チャンネルの表示位置と、外部入力モードのときの呼び名
+    const readouts = [
+        { ch: 'CH1', x: 20,  label: isExternal ? 'DA出力' : 'CH1' },
+        { ch: 'CH2', x: 200, label: isExternal ? '原波形' : 'CH2' },
+        { ch: 'CH3', x: 380, label: 'CH3' },
+    ];
+
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'left';
+    readouts.forEach(({ ch, x, label }) => {
+        if (!(MODEL_CHANNELS[currentModelId] || []).includes(ch)) return;
+
+        const vDiv = VOLT_STEPS[scopeState['voltIndex' + ch]];
+        const vText = vDiv >= 1 ? `${vDiv.toFixed(2)}V` : `${(vDiv * 1000).toFixed(0)}mV`;
+        const marker = (scopeState.activeChannel === ch) ? '▶ ' : '   ';   // 選択中のチャンネルに印
+        ctx.fillStyle = CHANNEL_COLORS[ch];
+        ctx.fillText(`${marker}${label} ${vText}`, x, y);
+    });
+
+    // 時間軸
+    const timeDiv = TIME_STEPS[scopeState.timeIndex];
+    const tText = timeDiv >= 1     ? `${timeDiv.toFixed(2)}s`
+                : timeDiv >= 0.001 ? `${(timeDiv * 1000).toFixed(2)}ms`
+                :                    `${(timeDiv * 1000000).toFixed(0)}us`;
+    ctx.fillStyle = 'white';
+    ctx.textAlign = 'center';
+    ctx.fillText(`M ${tText}`, canvas.width / 2, y);
+}
+
+// 左上の表示（発振器とAD/DA変換機の設定、サンプリング定理の判定）
+function drawAdDaInfo() {
+    if (scopeState.inputSource !== 'fg' || !fgState.outputOn) return;
+
+    const fmtKHz = hz => hz >= 1000 ? (hz / 1000).toFixed(2) + 'kHz' : hz.toFixed(0) + 'Hz';
+    const freqStr = fmtKHz(fgState.freq);
+    const fsHz = 1000000 / adDaState.samplingPeriodUs;
+    const fsStr = fsHz >= 1000 ? (fsHz / 1000).toFixed(0) + 'kHz' : fsHz + 'Hz';
+    const nyquist = fsHz / 2;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(5, 5, 260, 50);
+
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#00ff88';
+    ctx.fillText(`FG: ${fgState.waveform} ${freqStr} ${fgState.amptd.toFixed(2)}Vpp`, 10, 18);
+    ctx.fillStyle = '#ffaa00';
+    ctx.fillText(`AD/DA: ${adDaState.resolution}bit  fs=${fsStr}  (${adDaState.samplingPeriodUs}µs)`, 10, 32);
+
+    // 入力周波数が fs/2 を超えるとエイリアス（折り返し）が起きる
+    if (fgState.freq > nyquist) {
+        const foldedStr = fmtKHz(getAliasedFrequency(fgState.freq, fsHz));
+        ctx.fillStyle = '#ff4444';
+        ctx.fillText(`⚠ エイリアス! fin(${freqStr}) > fs/2(${(nyquist / 1000).toFixed(1)}kHz) → fout=${foldedStr}`, 10, 46);
+    } else {
+        ctx.fillStyle = '#88ff88';
+        ctx.fillText(`✓ fin < fs/2 (${(nyquist / 1000).toFixed(1)}kHz) サンプリング定理OK`, 10, 46);
+    }
+}
+
+// 右上の表示（トリガレベルと状態）
+function drawTriggerStatus() {
+    const statusText = scopeState.trigger.isTriggered ? "Trig'd" : 'Auto';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(255, 165, 0, 1)';
+    ctx.fillText(`T: ${scopeState.trigger.level.toFixed(2)}V (${statusText})`, canvas.width - 10, 30);
+}
+
+// メニュー（機種ごとに見た目が違う）
+function drawMenu() {
+    if (!scopeState.currentMenu || !scopeState.isOn) return;
+
+    const data = MENU_DATA[currentModelId][scopeState.currentMenu];
+    if (!data) return;
+
+    if (currentModelId === 'hantek') drawMenuHantek(data);
+    else drawMenuAgilent(data);
+}
+
+// Hantek風メニュー: 画面右端に縦並び（F1〜F5ボタンの横）
+function drawMenuHantek(data) {
+    const menuWidth = 100;
+    const menuX = canvas.width - menuWidth;
+    const centerX = menuX + (menuWidth / 2);
+
+    // 背景の帯
+    ctx.fillStyle = 'rgba(0, 50, 100, 0.8)';
+    ctx.fillRect(menuX, 0, menuWidth, canvas.height);
+
+    // タイトル
+    ctx.fillStyle = '#002d5c';
+    ctx.fillRect(menuX + 2, 2, menuWidth - 4, 40);
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(data.title, centerX, 25);
+
+    // 項目（F1〜F5 の5個まで）
+    const startY = 60;
+    const buttonHeight = 50;
+    const gap = 10;
+
+    ctx.font = '12px sans-serif';
+    data.items.forEach((item, index) => {
+        if (index >= 5) return;
+        const boxY = startY + index * (buttonHeight + gap);
+
+        ctx.fillStyle = '#004080';
+        ctx.strokeStyle = '#4da6ff';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.rect(menuX + 5, boxY, menuWidth - 10, buttonHeight);
+        ctx.fill();
+        ctx.stroke();
+
+        // 「項目名: 値」の形なら2行に分け、値を黄色で表示する
+        const parts = item.split(': ');
+        ctx.fillStyle = 'white';
+        if (parts.length > 1) {
+            ctx.fillText(parts[0], centerX, boxY + 20);
+            ctx.fillStyle = 'yellow';
+            ctx.fillText(parts[1], centerX, boxY + 38);
+        } else {
+            ctx.fillText(item, centerX, boxY + 30);
+        }
+    });
+}
+
+// Agilent風メニュー: 画面下端に横並び（ソフトキーの上）。チャンネルのメニューはその色で表示
+function drawMenuAgilent(data) {
+    const menuHeight = 65;
+    const menuY = canvas.height - menuHeight;
+    const themeColor = { CH1_MENU: 'yellow', CH2_MENU: 'cyan', CH3_MENU: '#ff66ff' }[scopeState.currentMenu] || '#ccc';
+
+    // 背景と上端の線
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+    ctx.fillRect(0, menuY, canvas.width, menuHeight);
+    ctx.strokeStyle = themeColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, menuY);
+    ctx.lineTo(canvas.width, menuY);
+    ctx.stroke();
+
+    // タイトル（メニューの左上）
+    ctx.fillStyle = themeColor;
+    ctx.font = "bold 14px 'Segoe UI', sans-serif";
+    ctx.textAlign = 'left';
+    ctx.fillText(data.title, 10, menuY - 10);
+
+    // 項目（ソフトキー6個分）
+    const buttonCount = 6;
+    const itemWidth = canvas.width / buttonCount;
+
+    data.items.forEach((item, index) => {
+        if (index >= buttonCount) return;
+        const itemX = index * itemWidth;
+        const centerX = itemX + (itemWidth / 2);
+
+        // 区切り線
+        if (index > 0) {
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(itemX, menuY);
+            ctx.lineTo(itemX, canvas.height);
+            ctx.stroke();
+        }
+
+        // 「項目名: 値」の形なら2段に分け、値をメニューの色で表示する
+        const parts = item.split(': ');
+        ctx.textAlign = 'center';
+        if (parts.length > 1) {
+            ctx.fillStyle = '#bbb';
+            ctx.font = '12px sans-serif';
+            ctx.fillText(parts[0], centerX, menuY + 22);
+            ctx.fillStyle = themeColor;
+            ctx.font = 'bold 14px sans-serif';
+            ctx.fillText(parts[1], centerX, menuY + 48);
+        } else {
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 13px sans-serif';
+            ctx.fillText(item, centerX, menuY + 38);
+        }
+    });
+}
+
+// 自動計測の表示（選択中のチャンネルの Vp-p と周波数）
+function drawMeasurePanel() {
+    if (!scopeState.showMeasure) return;
+
+    const ch = scopeState.activeChannel;
+    const signal = scopeState.signals[ch];
+
+    // 振幅・周波数を持たない信号（AD変換の階段状の信号）は計測できないので「---」と表示する
+    let vppText = '---';
+    let freqText = '---';
+    if (typeof signal.amplitude === 'number' && typeof signal.frequency === 'number') {
+        vppText = (signal.amplitude * 2).toFixed(2) + ' V';
+        freqText = signal.frequency >= 1000
+            ? (signal.frequency / 1000).toFixed(2) + ' kHz'
+            : signal.frequency.toFixed(2) + ' Hz';
     }
 
-    updateAdDaPanelDisplay();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(canvas.width - 250, 40, 140, 70);
+
+    ctx.fillStyle = '#00FF00';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`[${ch}]`, canvas.width - 240, 60);
+    ctx.fillText(`Vp-p: ${vppText}`, canvas.width - 240, 80);
+    ctx.fillText(`Freq: ${freqText}`, canvas.width - 240, 100);
 }
 
-function formatAdDaFs(periodUs) {
-    const fsHz = 1000000 / periodUs;
-    if (fsHz >= 100000) return (fsHz / 1000).toFixed(0) + ' kHz';
-    if (fsHz >= 1000) return (fsHz / 1000).toFixed(fsHz % 1000 === 0 ? 0 : 1) + ' kHz';
-    return fsHz.toFixed(0) + ' Hz';
+// カーソル: 時間カーソルA・B（縦線）と、電圧カーソルY1・Y2（横線）。左上に読み値を表示する
+//   時間 … A・B の間隔から Δt と 1/Δt
+//   電圧 … 選択中のチャンネルの電圧レンジと上下位置を基準にした Y1・Y2 の電圧と、その差 ΔY
+function drawCursors() {
+    const cursor = scopeState.cursor;
+    if (!cursor.show) return;
+
+    const ch = scopeState.activeChannel;
+    const centerY = canvas.height / 2;
+    const voltDiv = VOLT_STEPS[scopeState['voltIndex' + ch]];
+    const voltageOf = offsetY => (offsetY - scopeState['position' + ch]) / PIXELS_PER_DIV * voltDiv;
+
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.font = '12px sans-serif';
+
+    // 線と名前（ツマミで動かせるカーソルを明るく表示）
+    const colorOf = name => (cursor.target === name) ? '#00FFFF' : 'rgba(255,255,255,0.5)';
+    [['A', cursor.posA], ['B', cursor.posB]].forEach(([name, x]) => {
+        ctx.beginPath();
+        ctx.strokeStyle = colorOf(name);
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+        ctx.fillStyle = colorOf(name);
+        ctx.textAlign = 'left';
+        ctx.fillText(name, x + 4, canvas.height - 50);
+    });
+    [['Y1', cursor.offsetY1], ['Y2', cursor.offsetY2]].forEach(([name, offsetY]) => {
+        const y = centerY - offsetY;
+        ctx.beginPath();
+        ctx.strokeStyle = colorOf(name);
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+        ctx.fillStyle = colorOf(name);
+        ctx.textAlign = 'right';
+        ctx.fillText(name, canvas.width - 30, y - 8);
+    });
+
+    // 時間: カーソル間のピクセル数を時間に換算する
+    const timePerPixel = TIME_STEPS[scopeState.timeIndex] / PIXELS_PER_DIV;
+    const deltaT = Math.abs(cursor.posB - cursor.posA) * timePerPixel;
+    const freq = deltaT > 0 ? (1 / deltaT) : 0;
+    const deltaTText = deltaT >= 1     ? `${deltaT.toFixed(2)} s`
+                     : deltaT >= 0.001 ? `${(deltaT * 1000).toFixed(2)} ms`
+                     :                   `${(deltaT * 1000000).toFixed(2)} us`;
+    const freqText = freq >= 1000 ? `${(freq / 1000).toFixed(2)} kHz` : `${freq.toFixed(2)} Hz`;
+
+    // 電圧: カーソルの高さを、選択中のチャンネルの電圧に換算する
+    const y1 = voltageOf(cursor.offsetY1);
+    const y2 = voltageOf(cursor.offsetY2);
+
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(10, 10, 190, 120);
+
+    ctx.fillStyle = '#FFF';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Δt : ${deltaTText}`, 20, 28);
+    ctx.fillText(`1/Δt : ${freqText}`, 20, 48);
+    ctx.fillStyle = CHANNEL_COLORS[ch];
+    ctx.fillText(`Y1 (${ch}) : ${y1.toFixed(2)} V`, 20, 74);
+    ctx.fillText(`Y2 (${ch}) : ${y2.toFixed(2)} V`, 20, 94);
+    ctx.fillText(`ΔY : ${Math.abs(y1 - y2).toFixed(2)} V`, 20, 114);
+
+    ctx.restore();
 }
 
+// 描画ループ（RUN中は時刻を進める）
+function animationLoop() {
+    if (scopeState.isOn && scopeState.isRunning) {
+        scopeState.timeOffset -= 0.0001;
+    }
+    drawWaveform();
+    requestAnimationFrame(animationLoop);
+}
+
+
+// =======================================================================
+//  7. 直流電源
+// =======================================================================
+
+// ボタン操作（ツマミを回す操作は 12章の onHotspotWheel で処理する）
+function handlePsButton(title) {
+    if (title === 'ps_power') {
+        psState.isOn = !psState.isOn;
+        if (!psState.isOn) psState.isOutputOn = false;   // 電源OFFで出力も切れる
+        updatePSDisplay();
+
+    } else if (title === 'ch1btn' || title === 'ch2btn') {
+        if (!psState.isOn) return;
+        psState.activeChannel = (title === 'ch1btn') ? 'CH1' : 'CH2';
+        renderPsDisplay();
+
+    } else if (title === 'output') {
+        if (!psState.isOn) return;
+        psState.isOutputOn = !psState.isOutputOn;
+        renderPsDisplay();
+        applyAdDaSignals();
+
+    } else if (title === 'volt') {
+        // 電圧ツマミを押す: 粗調整(0.1V刻み) ⇔ 微調整 FINE(0.01V刻み)
+        if (!psState.isOn) return;
+        psState.fineMode = !psState.fineMode;
+        renderPsDisplay();
+        showWireStatus(psState.fineMode
+            ? '直流電源 VOLTAGE: FINE（0.01V刻み）'
+            : '直流電源 VOLTAGE: 粗調整（0.1V刻み）');
+    }
+}
+
+// 電圧ツマミを1段階回す（direction: +1 = 上げる / -1 = 下げる）。0〜30V
+function stepPsVoltage(direction) {
+    const channel = psState[psState.activeChannel.toLowerCase()];
+    const step = psState.fineMode ? 0.01 : 0.1;
+    const next = Math.max(0, Math.min(30, channel.voltage + direction * step));
+    channel.voltage = Math.round(next * 100) / 100;   // 小数の誤差がたまらないよう 0.01V 単位に丸める
+    updatePSDisplay();
+}
+
+// 本体のLED表示（電圧・電流）と、下の状態表示バーを現在の状態に合わせる
+function renderPsDisplay() {
+    const setText = (id, text) => { document.getElementById(id).textContent = text; };
+
+    // 電源OFFなら表示を消す
+    setText('disp-ch1-v', psState.isOn ? psState.ch1.voltage.toFixed(2).padStart(5, '0') : '');
+    setText('disp-ch1-a', psState.isOn ? psState.ch1.current.toFixed(3) : '');
+    setText('disp-ch2-v', psState.isOn ? psState.ch2.voltage.toFixed(2).padStart(5, '0') : '');
+    setText('disp-ch2-a', psState.isOn ? psState.ch2.current.toFixed(3) : '');
+
+    // 状態表示バー
+    setText('ps-st-power', psState.isOn ? 'ON' : 'OFF');
+    setText('ps-st-output', psState.isOutputOn ? 'ON' : 'OFF');
+    setText('ps-st-channel', psState.activeChannel);
+    setText('ps-st-fine', psState.fineMode ? 'FINE (0.01V刻み)' : '粗調整 (0.1V刻み)');
+    document.getElementById('ps-st-output').classList.toggle('is-on', psState.isOutputOn);
+    document.getElementById('ps-st-fine').classList.toggle('is-on', psState.fineMode);
+}
+
+// 本体の表示を更新し、電圧の変化をオシロにも反映する
+function updatePSDisplay() {
+    renderPsDisplay();
+    refreshScopeSignals();
+}
+
+
+// =======================================================================
+//  8. 発振器
+// =======================================================================
+
+// テンキーのボタン名 → 入力される文字
+const FG_NUMBER_KEYS = {
+    zero: '0', one: '1', two: '2', three: '3', fore: '4',
+    five: '5', six: '6', seven: '7', eight: '8', nine: '9',
+};
+
+// 項目選択ボタン → 入力中の項目
+const FG_INPUT_MODES = { freq: 'FREQ', amptd: 'AMPTD', offset: 'OFFSET' };
+
+// ボタン操作
+function handleFgButton(btnId) {
+    // 電源
+    if (btnId === 'latorpowar') {
+        fgState.power = !fgState.power;
+        if (!fgState.power) {
+            fgState.outputOn = false;   // 電源OFFで出力も切れる
+            fgState.inputMode = '';
+            fgState.inputValue = '';
+        }
+        updateFgDisplay();
+        return;
+    }
+
+    // 電源が入っていなければ他のボタンは反応しない
+    if (!fgState.power) return;
+
+    if (FG_NUMBER_KEYS[btnId]) {
+        // テンキー（項目を選択しているときだけ入力できる）
+        if (fgState.inputMode) fgState.inputValue += FG_NUMBER_KEYS[btnId];
+
+    } else if (btnId === 'dot') {
+        if (fgState.inputMode && !fgState.inputValue.includes('.')) fgState.inputValue += '.';
+
+    } else if (btnId === 'puramai') {
+        // 符号の反転
+        if (fgState.inputMode) {
+            fgState.inputValue = fgState.inputValue.startsWith('-')
+                ? fgState.inputValue.substring(1)
+                : '-' + fgState.inputValue;
+        }
+
+    } else if (btnId === 'cansel' || btnId === 'undo') {
+        fgState.inputValue = '';
+
+    } else if (btnId === 'enter') {
+        // 入力した値を確定する（設定できる範囲に収める）
+        const val = parseFloat(fgState.inputValue);
+        if (fgState.inputMode && fgState.inputValue !== '' && !isNaN(val)) {
+            if (fgState.inputMode === 'FREQ')   fgState.freq   = Math.max(0.001, Math.min(2000000, val));
+            if (fgState.inputMode === 'AMPTD')  fgState.amptd  = Math.max(0.001, Math.min(10.0, val));
+            if (fgState.inputMode === 'OFFSET') fgState.offset = Math.max(-5.0, Math.min(5.0, val));
+        }
+        fgState.inputMode = '';
+        fgState.inputValue = '';
+
+    } else if (btnId === 'fctn') {
+        // 波形の切替: SINE → SQUARE → RAMP → SINE ...
+        const waves = ['SINE', 'SQUARE', 'RAMP'];
+        fgState.waveform = waves[(waves.indexOf(fgState.waveform) + 1) % waves.length];
+        showWireStatus(`波形: ${fgState.waveform} に切替`);
+
+    } else if (FG_INPUT_MODES[btnId]) {
+        // 入力する項目の選択（周波数・振幅・オフセット）
+        fgState.inputMode = FG_INPUT_MODES[btnId];
+        fgState.inputValue = '';
+
+    } else if (btnId === 'out') {
+        // 出力のON/OFF
+        fgState.outputOn = !fgState.outputOn;
+        if (fgState.outputOn) {
+            // 出力ONでオシロの電源も入れる
+            if (!scopeState.isOn) {
+                scopeState.isOn = true;
+                scopeState.isRunning = true;
+            }
+            // オシロに直結していないときは、AD/DA変換機の入力切換(SW1)を発振器側にする
+            const isWiredToScope = wiringState.connections.some(c => c.type === 'fg');
+            if (!isWiredToScope) adDaState.inputSource = 'fg';
+            showWireStatus('📡 発振器 OUTPUT ON');
+        } else {
+            showWireStatus('🔇 発振器 OUTPUT OFF');
+        }
+    }
+
+    updateFgDisplay();
+}
+
+// 本体の画面表示を更新し、設定の変化をオシロにも反映する
+function updateFgDisplay() {
+    const display = document.getElementById('fg-display');
+    display.classList.toggle('fg-display-on', fgState.power);   // 電源OFFなら画面を消す
+
+    if (fgState.power) {
+        const freqText = fgState.freq >= 1000
+            ? (fgState.freq / 1000).toFixed(3) + ' kHz'
+            : fgState.freq.toFixed(1) + ' Hz';
+
+        document.getElementById('fg-disp-wave').innerText   = `WAVE: ${fgState.waveform}`;
+        document.getElementById('fg-disp-freq').innerText   = `FREQ: ${freqText}`;
+        document.getElementById('fg-disp-amptd').innerText  = `AMP: ${fgState.amptd.toFixed(3)} Vpp`;
+        document.getElementById('fg-disp-offset').innerText = `OFS: ${fgState.offset.toFixed(2)} V`;
+        document.getElementById('fg-disp-out').innerText    = fgState.outputOn ? 'OUTPUT: ON ▶' : 'OUTPUT: OFF';
+        document.getElementById('fg-disp-input').innerText  = fgState.inputMode
+            ? `[入力中] ${fgState.inputMode} > ${fgState.inputValue}_`
+            : '';
+    }
+
+    refreshScopeSignals();
+}
+
+
+// =======================================================================
+//  9. AD/DA変換機 (ITF-203B)
+// =======================================================================
+
+// -----------------------------------------------------------------------
+//  スイッチ操作
+// -----------------------------------------------------------------------
+
+function handleAddaSwitch(swId) {
+    if (swId === 'SW1') {
+        // 入力切換: TB1 に結線があるときは、結線されている機器で決まるので切り替えられない
+        const tb1Source = getTb1Source();
+        if (tb1Source) {
+            const deviceName = (tb1Source === 'dc') ? '直流電源' : '発振器';
+            showWireStatus(`SW1: TB1には${deviceName}が結線されています。切り替えるには先に結線を外してください。`);
+            return;
+        }
+        adDaState.inputSource = (adDaState.inputSource === 'fg') ? 'dc' : 'fg';
+        switchInputSource(adDaState.inputSource === 'dc' ? 'power_supply' : 'fg');
+        refreshScopeSignals();
+
+    } else if (swId === 'SW4') {
+        // 量子化ビット数: 8bit ⇔ 4bit
+        adDaState.resolution = (adDaState.resolution === 8) ? 4 : 8;
+        refreshScopeSignals();
+        showWireStatus(`AD resolution: ${adDaState.resolution} bit`);
+
+    } else if (swId === 'SW5' || swId === 'SW7') {
+        // 動作モード: バイポーラ ⇔ ユニポーラ
+        adDaState.mode = (adDaState.mode === 'bipolar') ? 'unipolar' : 'bipolar';
+        refreshScopeSignals();
+        showWireStatus(`AD/DA mode: ${adDaState.mode}`);
+
+    } else if (swId === 'SW6' || swId === 'SW8') {
+        showWireStatus(`${swId}: OFF (filter bypass for this experiment)`);
+    }
+}
+
+// サンプリング周期を1段階切り替える（direction: +1 = 次へ / -1 = 前へ。端まで行くと反対側に戻る）
+function cycleAdDaSampling(direction = 1) {
+    const options = adDaState.samplingOptions;
+    const current = options.indexOf(adDaState.samplingPeriodUs);
+    adDaState.samplingPeriodUs = options[(current + direction + options.length) % options.length];
+    refreshScopeSignals();
+    showWireStatus(`Ts = ${adDaState.samplingPeriodUs} us`);
+}
+
+// -----------------------------------------------------------------------
+//  状態表示バー（基板の下。デジタルコードのLEDと、スイッチの現在の設定）
+// -----------------------------------------------------------------------
+
+function updateAdDaStatus() {
+    const setText = (id, text) => { document.getElementById(id).textContent = text; };
+    const n = adDaState.resolution;
+    const tb1Source = getTb1Source();
+
+    // --- デジタルコード（LED 8個。左が最上位ビット）---
+    // 4bit のときは上位側の4個だけを使う。
+    // 発振器を入力しているときはコードが高速に変わり続けるので、全体を薄く点灯させる
+    const isChanging = (tb1Source === 'fg' && fgState.power && fgState.outputOn);
+    const code = getAdDaCode(getAdDaInputVoltage());
+    const codeText = code.toString(2).padStart(n, '0');
+
+    document.querySelectorAll('#adda-leds .led').forEach((led, i) => {
+        const isUsed = (i < n);
+        led.classList.toggle('unused', !isUsed);
+        led.classList.toggle('dim', isUsed && isChanging);
+        led.classList.toggle('on', isUsed && !isChanging && codeText[i] === '1');
+    });
+    setText('adda-st-code', isChanging ? '(変化中)' : codeText);
+
+    // --- スイッチの設定 ---
+    const fsHz = 1000000 / adDaState.samplingPeriodUs;
+    setText('adda-st-input', tb1Source === 'dc' ? '直流電源' : (tb1Source === 'fg' ? '発振器' : '未結線'));
+    setText('adda-st-bits', n + ' bit');
+    setText('adda-st-mode', adDaState.mode === 'unipolar' ? 'ユニポーラ' : 'バイポーラ');
+    setText('adda-st-sampling', `${adDaState.samplingPeriodUs} µs (${fsHz / 1000} kHz)`);
+}
+
+// -----------------------------------------------------------------------
+//  入力電圧と AD変換
+// -----------------------------------------------------------------------
+
+// 信号入力端子 TB1 に結線されている機器（'dc' = 直流電源 / 'fg' = 発振器 / null = 未結線）
+function getTb1Source() {
+    const conn = wiringState.connections.find(c =>
+        c.addaTerminal === 'TB1' && (c.type === 'ps-adda' || c.type === 'fg-adda'));
+    if (!conn) return null;
+    return (conn.type === 'ps-adda') ? 'dc' : 'fg';
+}
+
+// AD変換する入力電圧。発振器の場合は波形のピーク値を代表値とする
+// ※ 直流電源は、どの端子を繋いでも CH1 の設定電圧を使う
 function getAdDaInputVoltage() {
-    // 実機同様、TB1に何も結線されていなければ入力電圧は無い
-    if (!adDaState.tb1Wired) return 0;
-
-    if (adDaState.tb1Wired === 'dc') {
+    const source = getTb1Source();
+    if (source === 'dc') {
         return (psState.isOn && psState.isOutputOn) ? psState.ch1.voltage : 0;
     }
-    if (adDaState.tb1Wired === 'fg') {
-        if (fgState.power && fgState.outputOn) {
-            const amp = fgState.amptd / 2;
-            return fgState.offset + amp;
-        }
+    if (source === 'fg' && fgState.power && fgState.outputOn) {
+        return fgState.offset + fgState.amptd / 2;
     }
     return 0;
 }
 
+// 電圧 → AD変換結果のコード（0 〜 2^n - 1）
 function getAdDaCode(voltage) {
     const levels = Math.pow(2, adDaState.resolution);
     const q = adDaState.FSR / levels;
@@ -3145,372 +1692,63 @@ function getAdDaCode(voltage) {
         const half = adDaState.FSR / 2;
         normalized = Math.max(-half, Math.min(half - q, voltage)) + half;
     }
-
     return Math.max(0, Math.min(levels - 1, Math.floor(normalized / q)));
 }
 
+// コード → DA変換後の電圧
 function getAdDaOutputFromCode(code) {
     const q = adDaState.FSR / Math.pow(2, adDaState.resolution);
     const value = code * q;
-    return adDaState.mode === 'unipolar' ? value : value - (adDaState.FSR / 2);
+    return (adDaState.mode === 'unipolar') ? value : value - (adDaState.FSR / 2);
 }
 
-function updateAdDaPanelDisplay() {
-    const fsText = formatAdDaFs(adDaState.samplingPeriodUs);
-    const q = adDaState.FSR / Math.pow(2, adDaState.resolution);
-    const vin = getAdDaInputVoltage();
-    const code = getAdDaCode(vin);
-    const vout = getAdDaOutputFromCode(code);
-    const codeText = code.toString(2).padStart(adDaState.resolution, '0');
+// --- 逐次比較型AD変換器の内部信号 ---
+// 1サンプリング周期を n+2 個の区間に分けて表す（n = 量子化ビット数）。
+//   区間 0      : 入力をサンプルする（変換開始）
+//   区間 1 〜 n : 上位ビット(MSB)から順に1ビットずつ決める
+//   区間 n+1    : 変換終了
+// 3つの信号は同じ区切りなので、オシロで並べると時間軸が対応する。
 
-    const setText = (id, text) => {
-        const el = document.getElementById(id);
-        if (el) el.textContent = text;
-    };
+// 論理 0 / 1 に対応する電圧 [V]
+const LOGIC_LOW = 0;
+const LOGIC_HIGH = 5;
 
-    setText('adda-fs', fsText);
-    setText('adda-ts', adDaState.samplingPeriodUs + ' us');
-    setText('adda-step', q.toFixed(4) + ' V');
-    setText('adda-input-voltage', vin.toFixed(2) + ' V');
-    setText('adda-output-voltage', vout.toFixed(2) + ' V');
-    setText('adda-code', codeText);
-
-    const sampling = document.getElementById('adda-sampling');
-    if (sampling) sampling.value = String(adDaState.samplingPeriodUs);
-
-    const sourceText = !adDaState.tb1Wired ? 'unconnected' : (adDaState.tb1Wired === 'fg' ? 'FG input' : 'DC input');
-    const modeText = adDaState.mode === 'unipolar' ? 'unipolar' : 'bipolar';
-    setText('adda-switch-readout',
-        `SW1 ${sourceText} / SW4 ${adDaState.resolution}bit, ${adDaState.samplingPeriodUs}us / SW5,SW7 ${modeText} / SW6,SW8 OFF`
-    );
-
-    document.querySelectorAll('#adda-led-bank span').forEach((led, i) => {
-        const firstActive = 8 - adDaState.resolution;
-        const bit = i >= firstActive ? codeText[i - firstActive] : '0';
-        led.classList.toggle('on', bit === '1');
-        led.classList.toggle('disabled', i < firstActive);
-        led.title = i < firstActive ? 'unused in 4bit mode' : `D${7 - i}: ${bit}`;
-    });
-
-    document.querySelectorAll('[data-adda-source]').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.addaSource === adDaState.inputSource);
-    });
-    document.querySelectorAll('[data-adda-bits]').forEach(btn => {
-        btn.classList.toggle('active', parseInt(btn.dataset.addaBits, 10) === adDaState.resolution);
-    });
-    document.querySelectorAll('[data-adda-mode]').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.addaMode === adDaState.mode);
-    });
-
-    updateFgToOscilloscope();
-    updateOscilloscopeSignal();
+// サンプル/ホールド制御信号（TP3）: 区間0だけ1（サンプル）、残りは0（ホールド）
+function buildSarSyncBits(resolution) {
+    const bits = new Array(resolution + 2).fill(0);
+    bits[0] = 1;
+    return bits;
 }
 
-function onAdDaSamplingChange(val) {
-    adDaState.samplingPeriodUs = parseInt(val, 10);
-    updateAdDaPanelDisplay();
-    showWireStatus(`AD/DA sampling period: ${adDaState.samplingPeriodUs} us`);
+// 比較器出力（TP8）: 変換開始マーカー(1) + 変換結果 n ビット(MSB→LSB) + 変換終了マーカー(0)
+function buildSarOutputBits(code, resolution) {
+    const bits = [1];
+    for (let i = resolution - 1; i >= 0; i--) {
+        bits.push((code >> i) & 1);
+    }
+    bits.push(0);
+    return bits;
 }
 
-function onAdDaBitsChange(bits) {
-    adDaState.resolution = bits === 4 ? 4 : 8;
-    updateAdDaPanelDisplay();
-    showWireStatus(`AD resolution: ${adDaState.resolution} bit`);
+// 逐次比較用の内部DA変換器の出力（TP5）: 入力電圧と比べる「試しの電圧」が階段状に変わっていく。
+//   区間 0      : リセット（コード0の電圧）
+//   区間 1 〜 n : それまでに確定したビット ＋ いま試しているビットを1にしたコードの電圧。
+//                 入力の方が大きければそのビットは1に確定し、小さければ0に戻して次のビットへ進む
+//   区間 n+1    : 確定したコード（＝AD変換結果）の電圧
+// 例: FSR=10.24V・8bit・ユニポーラで入力 6.98V → 0, 5.12, 7.68, 6.40, 7.04, 6.72, 6.88, 6.96, 7.00, 6.96 [V]
+function buildSarDacLevels(code, resolution) {
+    const levels = [getAdDaOutputFromCode(0)];
+    let decided = 0;                              // 確定済みのビット
+    for (let i = resolution - 1; i >= 0; i--) {
+        const trial = decided | (1 << i);         // このビットを1にして試す
+        levels.push(getAdDaOutputFromCode(trial));
+        if (code & (1 << i)) decided = trial;     // 入力 ≧ 試しの電圧 なら1に確定
+    }
+    levels.push(getAdDaOutputFromCode(code));
+    return levels;
 }
 
-function onAdDaSourceChange(src) {
-    adDaState.inputSource = src === 'dc' ? 'dc' : 'fg';
-    switchInputSource(adDaState.inputSource === 'dc' ? 'power_supply' : 'fg');
-    updateAdDaPanelDisplay();
-}
-
-function onAdDaModeChange(mode) {
-    adDaState.mode = mode === 'unipolar' ? 'unipolar' : 'bipolar';
-    updateAdDaPanelDisplay();
-    showWireStatus(`AD/DA mode: ${adDaState.mode}`);
-}
-
-function cycleAdDaSampling(direction = 1) {
-    const options = adDaState.samplingOptions || [5, 10, 50, 100, 200, 500];
-    const current = options.indexOf(adDaState.samplingPeriodUs);
-    const next = (current + direction + options.length) % options.length;
-    adDaState.samplingPeriodUs = options[next];
-    updateAdDaPanelDisplay();
-    showWireStatus(`Ts = ${adDaState.samplingPeriodUs} us`);
-}
-
-function handleAddaSwitch(swId) {
-    if (swId === 'SW1') {
-        if (adDaState.tb1Wired) {
-            const deviceName = adDaState.tb1Wired === 'dc' ? '直流電源' : '発振器';
-            showWireStatus(`SW1: TB1には${deviceName}が結線されています。切り替えるには先に結線を外してください。`);
-            return;
-        }
-        onAdDaSourceChange(adDaState.inputSource === 'fg' ? 'dc' : 'fg');
-    } else if (swId === 'SW4') {
-        onAdDaBitsChange(adDaState.resolution === 8 ? 4 : 8);
-    } else if (swId === 'SW5' || swId === 'SW7') {
-        onAdDaModeChange(adDaState.mode === 'bipolar' ? 'unipolar' : 'bipolar');
-    } else if (swId === 'SW6' || swId === 'SW8') {
-        showWireStatus(`${swId}: OFF (filter bypass for this experiment)`);
-    }
-}
-
-function getAdDaVoltage(rawVolt, adda) {
-    const resolution = adda.resolution || adDaState.resolution;
-    const FSR = adda.FSR || adDaState.FSR;
-    const mode = adda.mode || adDaState.mode;
-    const q = FSR / Math.pow(2, resolution);
-
-    if (mode === 'unipolar') {
-        const clipped = Math.max(0, Math.min(FSR - q, rawVolt));
-        return Math.round(clipped / q) * q;
-    }
-
-    const halfFSR = FSR / 2;
-    const clipped = Math.max(-halfFSR, Math.min(halfFSR - q, rawVolt));
-    return Math.round(clipped / q) * q;
-}
-
-const originalUpdateFgDisplayForAdDa = updateFgDisplay;
-updateFgDisplay = function() {
-    originalUpdateFgDisplayForAdDa();
-    if (document.getElementById('adda-photo-ui')) updateAdDaPanelDisplay();
-};
-
-const originalUpdatePSDisplayForAdDa = updatePSDisplay;
-updatePSDisplay = function() {
-    originalUpdatePSDisplayForAdDa();
-    if (document.getElementById('adda-photo-ui')) updateAdDaPanelDisplay();
-};
-
-const ADDA_TERMINALS = ['TB1','TB2','TB3','TB4','TB5','TB6','TP1','TP2','TP3','TP5','TP6','TP7','TP8','TP9','TP10','TP11','TP12'];
-Object.assign(TERMINAL_COLORS, {
-    TB1: '#27ae60', // 緑（AD/DA信号入力 +）
-    TB2: '#7f8c8d', // グレー（AD/DA信号入力 −/GND）
-    TB5: '#e74c3c',
-    TB6: '#222222',
-    TP1: '#3498db',
-    TP2: '#222222',
-    TP3: '#f1c40f',
-    TP5: '#9b59b6',
-    TP8: '#1abc9c'
-});
-
-const originalGetTerminalSideForAdDa = getTerminalSide;
-getTerminalSide = function(name) {
-    if (ADDA_TERMINALS.includes(name)) return 'adda';
-    return originalGetTerminalSideForAdDa(name);
-};
-
-const originalHandleTerminalClickForAdDa = handleTerminalClick;
-handleTerminalClick = function(terminalName, hotspotEl) {
-    const side = getTerminalSide(terminalName);
-    const pending = wiringState.pendingTerminal;
-    const usesAdDa = side === 'adda' || (pending && pending.side === 'adda');
-    if (!usesAdDa) return originalHandleTerminalClickForAdDa(terminalName, hotspotEl);
-    if (!side) return false;
-
-    const color = TERMINAL_COLORS[terminalName] || '#ffffff';
-    if (!pending) {
-        wiringState.pendingTerminal = { terminalName, side, color, el: hotspotEl };
-        hotspotEl.classList.add('wire-selected');
-        showWireStatus(`端子「${terminalName}」を選択。接続先をクリックしてください。`, 5000);
-        redrawWires();
-        return true;
-    }
-
-    if (pending.terminalName === terminalName) {
-        pending.el.classList.remove('wire-selected');
-        wiringState.pendingTerminal = null;
-        showWireStatus('選択を解除しました。');
-        redrawWires();
-        return true;
-    }
-
-    if (pending.side === side) {
-        showWireStatus('同じ機器側の端子同士は接続できません。');
-        return true;
-    }
-
-    if ((pending.side === 'adda' && side === 'osc') || (pending.side === 'osc' && side === 'adda')) {
-        const oscTerm = side === 'osc' ? terminalName : pending.terminalName;
-        const addaTerm = side === 'adda' ? terminalName : pending.terminalName;
-        wiringState.connections = wiringState.connections.filter(c => c.oscTerminal !== oscTerm);
-        wiringState.connections.push({
-            psTerminal: addaTerm,
-            addaTerminal: addaTerm,
-            oscTerminal: oscTerm,
-            color: TERMINAL_COLORS[addaTerm] || color,
-            type: 'adda'
-        });
-
-        pending.el.classList.remove('wire-selected');
-        pending.el.classList.add('wire-connected');
-        hotspotEl.classList.add('wire-connected');
-        wiringState.pendingTerminal = null;
-
-        scopeState.inputSource = 'fg';
-        updateAdDaTerminalSignals();
-        showWireStatus(`AD/DA(${addaTerm}) -> オシロ(${oscTerm}) を接続しました。`);
-        redrawWires();
-        return true;
-    }
-
-    // 直流電源 ↔ AD/DA（TB1/TB2への入力結線。図A: AD変換器の変換過程の観察 用）
-    if ((pending.side === 'ps' && side === 'adda') || (pending.side === 'adda' && side === 'ps')) {
-        const addaTerm = side === 'adda' ? terminalName : pending.terminalName;
-        const psTerm   = side === 'ps'   ? terminalName : pending.terminalName;
-
-        if (addaTerm !== 'TB1' && addaTerm !== 'TB2') {
-            showWireStatus('⚠️ 直流電源はAD/DA変換機のTB1(+)/TB2(-)端子に接続してください。');
-            return true;
-        }
-
-        // 同じAD/DA端子に既に結線があれば解除してから繋ぎ直す
-        wiringState.connections = wiringState.connections.filter(c => c.addaTerminal !== addaTerm);
-        wiringState.connections.push({
-            psTerminal: psTerm,
-            addaTerminal: addaTerm,
-            color: TERMINAL_COLORS[psTerm] || color,
-            type: 'ps-adda'
-        });
-
-        pending.el.classList.remove('wire-selected');
-        pending.el.classList.add('wire-connected');
-        hotspotEl.classList.add('wire-connected');
-        wiringState.pendingTerminal = null;
-
-        if (addaTerm === 'TB1') {
-            adDaState.tb1Wired = 'dc';
-            adDaState.inputSource = 'dc';
-        }
-
-        updateAdDaPanelDisplay();
-        updateAdDaTerminalSignals();
-        showWireStatus(`✅ 直流電源(${psTerm}) → AD/DA(${addaTerm}) を接続しました。右クリックで切断できます。`);
-        redrawWires();
-        return true;
-    }
-
-    // 発振器 ↔ AD/DA（TB1/TB2への入力結線。図B: AD/DA変換後の波形の観察 用）
-    if ((pending.side === 'fg' && side === 'adda') || (pending.side === 'adda' && side === 'fg')) {
-        const addaTerm = side === 'adda' ? terminalName : pending.terminalName;
-        const fgTerm   = side === 'fg'   ? terminalName : pending.terminalName;
-
-        if (addaTerm !== 'TB1' && addaTerm !== 'TB2') {
-            showWireStatus('⚠️ 発振器はAD/DA変換機のTB1(+)/TB2(-)端子に接続してください。');
-            return true;
-        }
-
-        wiringState.connections = wiringState.connections.filter(c => c.addaTerminal !== addaTerm);
-        wiringState.connections.push({
-            fgTerminal: fgTerm,
-            addaTerminal: addaTerm,
-            color: TERMINAL_COLORS[fgTerm] || color,
-            type: 'fg-adda'
-        });
-
-        pending.el.classList.remove('wire-selected');
-        pending.el.classList.add('wire-connected');
-        hotspotEl.classList.add('wire-connected');
-        wiringState.pendingTerminal = null;
-
-        if (addaTerm === 'TB1') {
-            adDaState.tb1Wired = 'fg';
-            adDaState.inputSource = 'fg';
-        }
-
-        updateAdDaPanelDisplay();
-        updateAdDaTerminalSignals();
-        showWireStatus(`✅ 発振器(${fgTerm}) → AD/DA(${addaTerm}) を接続しました。右クリックで切断できます。`);
-        redrawWires();
-        return true;
-    }
-
-    showWireStatus('このAD/DA端子の組み合わせは未対応です。');
-    return true;
-};
-
-function makeAdDaInputSignal() {
-    if (!adDaState.tb1Wired) {
-        // TB1未結線: 実機同様、入力信号なし
-        return { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg' };
-    }
-    if (adDaState.tb1Wired === 'dc') {
-        return { type: 'flat', amplitude: 0, frequency: 1, offset: getAdDaInputVoltage(), source: 'fg' };
-    }
-    const waveMap = { SINE: 'sine', SQUARE: 'square', RAMP: 'tri' };
-    return {
-        type: waveMap[fgState.waveform] || 'sine',
-        amplitude: fgState.outputOn ? fgState.amptd / 2 : 0,
-        frequency: fgState.freq,
-        offset: fgState.outputOn ? fgState.offset : 0,
-        source: 'fg'
-    };
-}
-
-function makeAdDaTerminalSignal(terminalName) {
-    const input = makeAdDaInputSignal();
-    const fsHz = 1000000 / adDaState.samplingPeriodUs;
-
-    if (terminalName === 'TB5') {
-        if (!adDaState.tb1Wired) {
-            return { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg' };
-        }
-        if (adDaState.tb1Wired === 'dc') {
-            return { type: 'flat', amplitude: 0, frequency: 1, offset: getAdDaOutputFromCode(getAdDaCode(getAdDaInputVoltage())), source: 'fg' };
-        }
-        return {
-            ...input,
-            source: 'adda',
-            adda: {
-                resolution: adDaState.resolution,
-                samplingPeriodUs: adDaState.samplingPeriodUs,
-                FSR: adDaState.FSR,
-                mode: adDaState.mode
-            }
-        };
-    }
-
-    if (terminalName === 'TP1') return input;
-
-    const tsSec = adDaState.samplingPeriodUs * 1e-6;
-
-    // TP3: サンプル/ホールド制御信号（各サンプリング周期の先頭で短いパルス）
-    if (terminalName === 'TP3') {
-        return {
-            type: 'sarcode',
-            bits: buildSarSyncBits(adDaState.resolution),
-            tsSec,
-            low: 0,
-            high: 5,
-            source: 'fg'
-        };
-    }
-
-    // TP5 / TP8: 比較器出力。実際の入力電圧を逐次比較型AD変換器で変換した際の
-    // ビット列（開始マーカー1bit + 変換結果nbit(MSB→LSB) + 終了マーカー1bit）を
-    // 入力電圧が変わるたびに再計算して表示する。
-    if (terminalName === 'TP5' || terminalName === 'TP8') {
-        const voltage = getAdDaInputVoltage();
-        const code = getAdDaCode(voltage);
-        return {
-            type: 'sarcode',
-            bits: buildSarOutputBits(code, adDaState.resolution),
-            tsSec,
-            low: 0,
-            high: 5,
-            source: 'fg'
-        };
-    }
-
-    return { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg' };
-}
-
-// サンプリング周波数fsで周波数finをサンプリングした時に実際に観測される
-// 折り返し（エイリアス）後の周波数を計算する。
-// fout = fin を fs の周期で畳み込み、0〜fs/2の範囲に収める。
+// サンプリング周波数 fs で周波数 fin を標本化したときに観測される周波数（折り返し後、0〜fs/2）
 function getAliasedFrequency(fin, fs) {
     if (!fs || fs <= 0) return fin;
     let f = fin % fs;
@@ -3519,191 +1757,928 @@ function getAliasedFrequency(fin, fs) {
     return f;
 }
 
-// AD/DA端子ごとの「実際に表示すべき周波数」を返す（時間軸の自動調整に使用）
-// null を返す場合はその端子の表示周波数からは自動調整しない（DC等）
+// -----------------------------------------------------------------------
+//  各端子から出る信号
+// -----------------------------------------------------------------------
+
+// 0V を基準にした直流（一定電圧）の信号
+function flatSignal(source, offset = 0) {
+    return { type: 'flat', amplitude: 0, frequency: 1, offset, source };
+}
+
+// TB1 に入力されているアナログ信号
+function makeAdDaInputSignal() {
+    const tb1Source = getTb1Source();
+    if (!tb1Source)         return flatSignal('fg');                          // 未結線: 入力なし
+    if (tb1Source === 'dc') return flatSignal('fg', getAdDaInputVoltage());   // 直流電源
+
+    // 発振器
+    const waveMap = { SINE: 'sine', SQUARE: 'square', RAMP: 'tri' };
+    return {
+        type: waveMap[fgState.waveform] || 'sine',
+        amplitude: fgState.outputOn ? fgState.amptd / 2 : 0,
+        frequency: fgState.freq,
+        offset: fgState.outputOn ? fgState.offset : 0,
+        source: 'fg',
+    };
+}
+
+// AD/DA変換機の端子 terminalName をオシロに繋いだときに観測される信号
+function makeAdDaTerminalSignal(terminalName) {
+    const tb1Source = getTb1Source();
+    const tsSec = adDaState.samplingPeriodUs * 1e-6;
+
+    // TP1: 入力の原波形
+    if (terminalName === 'TP1') return makeAdDaInputSignal();
+
+    // TB5: DA出力
+    if (terminalName === 'TB5') {
+        if (!tb1Source) return flatSignal('fg');
+        if (tb1Source === 'dc') {
+            return flatSignal('fg', getAdDaOutputFromCode(getAdDaCode(getAdDaInputVoltage())));
+        }
+        // 発振器: 原波形に、描画時に標本化＋量子化をかける
+        return {
+            ...makeAdDaInputSignal(),
+            source: 'adda',
+            adda: {
+                resolution: adDaState.resolution,
+                samplingPeriodUs: adDaState.samplingPeriodUs,
+                FSR: adDaState.FSR,
+                mode: adDaState.mode,
+            },
+        };
+    }
+
+    // 逐次比較の内部信号（1サンプリング周期で繰り返す階段状の信号）
+    const sequence = levels => ({ type: 'sequence', levels, tsSec, source: 'fg' });
+    const logic = bits => bits.map(bit => bit ? LOGIC_HIGH : LOGIC_LOW);
+    const code = getAdDaCode(getAdDaInputVoltage());
+
+    // TP3: サンプル/ホールド制御信号
+    if (terminalName === 'TP3') return sequence(logic(buildSarSyncBits(adDaState.resolution)));
+
+    // TP8: 比較器出力（AD変換結果のビット列）
+    if (terminalName === 'TP8') return sequence(logic(buildSarOutputBits(code, adDaState.resolution)));
+
+    // TP5: 逐次比較用DA変換器の出力（試しの電圧の階段波）
+    if (terminalName === 'TP5') return sequence(buildSarDacLevels(code, adDaState.resolution));
+
+    // そのほかの端子は未対応（0V）
+    return flatSignal('fg');
+}
+
+// 端子の信号を見やすく表示するための基準周波数（時間軸の自動調整に使う）。
+// 自動調整しない場合（直流入力・未結線など）は null
 function getAdDaTerminalDisplayFrequency(terminalName) {
     const fsHz = 1000000 / adDaState.samplingPeriodUs;
 
-    // TP3/TP5/TP8は1サンプリング周期(Ts)を「resolution+2」個のビットスロットに
-    // 分割した内部クロックで動くため、見やすい時間軸にするには fs より速い
-    // (resolution+2)倍の周波数を基準にスケーリングする
+    // 逐次比較の内部信号は1サンプリング周期を n+2 個に区切っているので、その速さを基準にする
     if (terminalName === 'TP3' || terminalName === 'TP5' || terminalName === 'TP8') {
         return fsHz * (adDaState.resolution + 2);
     }
+
     if (terminalName === 'TB5' || terminalName === 'TP1') {
-        // 発振器が結線されていて出力ONの時だけ、その周波数に合わせる
-        if (adDaState.tb1Wired === 'fg' && fgState.power && fgState.outputOn && fgState.freq) {
-            if (terminalName === 'TB5') {
-                // DA出力は「折り返し後（エイリアス後）の周波数」で表示されるため、
-                // 時間軸もそちらに合わせないと波形のうねりが見えない
-                const aliased = getAliasedFrequency(fgState.freq, fsHz);
-                // fin=n*fsぴったりの時(aliased=0)は直流化するので、
-                // 時間軸だけは極端に広がりすぎないよう最低値を設ける
-                return aliased > 0 ? aliased : Math.max(1, fsHz / 100);
-            }
-            return fgState.freq; // TP1（原波形）はそのままの周波数
-        }
-        return null; // DC入力時や未結線時は自動調整しない
+        const isFgInput = getTb1Source() === 'fg' && fgState.power && fgState.outputOn && fgState.freq;
+        if (!isFgInput) return null;
+        if (terminalName === 'TP1') return fgState.freq;
+
+        // DA出力は折り返し後の周波数で見える。fin が fs の整数倍で直流になるときは
+        // 時間軸が広がりすぎないよう下限を設ける
+        const aliased = getAliasedFrequency(fgState.freq, fsHz);
+        return aliased > 0 ? aliased : Math.max(1, fsHz / 100);
     }
     return null;
 }
 
-function updateAdDaTerminalSignals() {
+
+// =======================================================================
+//  10. 結線（ワイヤー）
+//
+//   操作: 端子をクリック（1本目を選択）→ 別の機器の端子をクリック（接続）
+//         端子を右クリック（その端子の線を切断）
+// =======================================================================
+
+// -----------------------------------------------------------------------
+//  端子・接続の問い合わせ
+// -----------------------------------------------------------------------
+
+// 端子名 → どの機器の端子か ('ps' | 'osc' | 'fg' | 'adda')。端子でなければ null
+function getTerminalSide(name) {
+    return Object.keys(TERMINALS).find(side => TERMINALS[side].includes(name)) || null;
+}
+
+// オシロのチャンネル名 ('CH1') → 入力端子名 ('Ch1')
+function oscTerminalOf(ch) {
+    return ch === 'CH1' ? 'Ch1' : (ch === 'CH3' ? 'Ch3' : 'Ch2');
+}
+
+// そのチャンネルの入力端子に繋がっている接続（無ければ undefined）
+function getOscChannelConnection(ch) {
+    const term = oscTerminalOf(ch);
+    return wiringState.connections.find(c => c.oscTerminal === term);
+}
+
+// 接続1本の両端を [[側, 端子名], [側, 端子名]] で返す（信号源側が先）
+function getConnectionEndpoints(conn) {
+    return ['ps', 'fg', 'adda', 'osc']
+        .filter(side => conn[side + 'Terminal'])
+        .map(side => [side, conn[side + 'Terminal']]);
+}
+
+// 端子のホットスポット要素を取得する（オシロは表示中の機種のものを返す）
+function getTerminalElement(side, terminalName) {
+    const containerId = (side === 'osc') ? 'model-' + currentModelId : 'model-' + side;
+    return document.querySelector(`#${containerId} .hotspot[title="${terminalName}"]`);
+}
+
+// -----------------------------------------------------------------------
+//  ワイヤーの描画
+// -----------------------------------------------------------------------
+
+// 要素の中心の画面座標
+function getCenterPos(el) {
+    const rect = el.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+}
+
+function createSvgElement(tag, attrs) {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
+    return el;
+}
+
+// 端子の「接続中」表示（緑）を、現在の結線に合わせて付け直す
+function syncTerminalHighlights() {
+    document.querySelectorAll('.hotspot.wire-connected').forEach(el => el.classList.remove('wire-connected'));
+    wiringState.connections.forEach(conn => {
+        getConnectionEndpoints(conn).forEach(([side, term]) => {
+            const el = getTerminalElement(side, term);
+            if (el) el.classList.add('wire-connected');
+        });
+    });
+}
+
+// すべてのワイヤーを描き直す（結線の変更・機器の移動・ウィンドウのリサイズ時に呼ぶ）
+function redrawWires() {
+    const svg = document.getElementById('wire-overlay');   // 画面全体に重ねたSVG
+    svg.innerHTML = '';
+
+    syncTerminalHighlights();
+
+    // 確定済みの接続
+    wiringState.connections.forEach(conn => {
+        const [[side1, term1], [side2, term2]] = getConnectionEndpoints(conn);
+        const el1 = getTerminalElement(side1, term1);
+        const el2 = getTerminalElement(side2, term2);
+        if (!el1 || !el2) return;
+        drawWire(svg, getCenterPos(el1), getCenterPos(el2), conn.color);
+    });
+
+    // 選択中（接続先待ち）の端子を、点滅する輪で囲む
+    const pending = wiringState.pendingTerminal;
+    if (pending && pending.el) {
+        const pos = getCenterPos(pending.el);
+        const circle = createSvgElement('circle', {
+            cx: pos.x, cy: pos.y, r: 12,
+            fill: 'none', stroke: pending.color, 'stroke-width': 3, 'stroke-dasharray': '4 3',
+        });
+        circle.style.animation = 'wirePulse 0.8s ease-in-out infinite alternate';
+        svg.appendChild(circle);
+    }
+}
+
+// 2点を、下にたるんだ曲線のワイヤーで結ぶ
+function drawWire(svg, p1, p2, color) {
+    const mx = (p1.x + p2.x) / 2;
+    const my = Math.max(p1.y, p2.y) + Math.abs(p2.x - p1.x) * 0.3 + 40;
+    const d = `M ${p1.x} ${p1.y} Q ${mx} ${my} ${p2.x} ${p2.y}`;
+
+    // 影（立体感）→ 本体 → 両端の丸 の順に重ねる
+    svg.appendChild(createSvgElement('path', {
+        d, fill: 'none', stroke: 'rgba(0,0,0,0.35)', 'stroke-width': 7, 'stroke-linecap': 'round',
+    }));
+    svg.appendChild(createSvgElement('path', {
+        d, fill: 'none', stroke: color, 'stroke-width': 4, 'stroke-linecap': 'round',
+    }));
+    [p1, p2].forEach(p => {
+        svg.appendChild(createSvgElement('circle', {
+            cx: p.x, cy: p.y, r: 5, fill: color, stroke: 'white', 'stroke-width': 1.5,
+        }));
+    });
+}
+
+// 画面下端のステータスバーにメッセージを一定時間表示する
+function showWireStatus(msg, durationMs = 2500) {
+    const bar = document.getElementById('wire-status-bar');
+    bar.textContent = msg;
+    bar.style.opacity = '1';
+    clearTimeout(bar._hideTimer);
+    bar._hideTimer = setTimeout(() => { bar.style.opacity = '0'; }, durationMs);
+}
+
+// -----------------------------------------------------------------------
+//  接続・切断
+// -----------------------------------------------------------------------
+
+// 端子がクリックされたときの処理
+function handleTerminalClick(terminalName, hotspotEl) {
+    const side = getTerminalSide(terminalName);
+    if (!side) return;
+
+    const pending = wiringState.pendingTerminal;
+
+    // 1本目: この端子を選択して、接続先のクリックを待つ
+    if (!pending) {
+        wiringState.pendingTerminal = {
+            terminalName, side, el: hotspotEl,
+            color: TERMINAL_COLORS[terminalName] || '#ffffff',
+        };
+        hotspotEl.classList.add('wire-selected');
+        showWireStatus(`🔌 端子「${terminalName}」を選択。次に接続先の端子をクリックしてください。`, 5000);
+        redrawWires();
+        return;
+    }
+
+    // 同じ端子をもう一度クリック → 選択を解除
+    if (pending.terminalName === terminalName) {
+        cancelPendingTerminal();
+        showWireStatus('❌ 選択を解除しました。');
+        redrawWires();
+        return;
+    }
+
+    // 2本目: 接続を試みる（接続できない組み合わせのときは、1本目の選択を残す）
+    if (pending.side === side) {
+        showWireStatus(`⚠️ ${SIDE_NAMES[side]}の端子同士は繋げません。`);
+        return;
+    }
+    const result = connectTerminals(pending, { terminalName, side });
+    showWireStatus(result.message);
+    if (result.connected) {
+        cancelPendingTerminal();
+        redrawWires();
+    }
+}
+
+// 1本目の選択を取り消す
+function cancelPendingTerminal() {
+    const pending = wiringState.pendingTerminal;
+    if (pending && pending.el) pending.el.classList.remove('wire-selected');
+    wiringState.pendingTerminal = null;
+}
+
+// 2つの端子（{ terminalName, side }）を接続する。first が先に選んだ端子、second が後からクリックした端子。
+// 戻り値: { connected: 接続できたか, message: ステータスバーに出すメッセージ }
+function connectTerminals(first, second) {
+    const term = { [first.side]: first.terminalName, [second.side]: second.terminalName };   // 側 → 端子名
+    const sourceSide = term.ps ? 'ps' : (term.fg ? 'fg' : 'adda');                           // 信号を出す側
+    const sourceTerm = term[sourceSide];
+
+    // ワイヤーの色は信号源側の端子の色（色が決まっていない端子なら、後からクリックした端子の色）
+    const color = TERMINAL_COLORS[sourceTerm] || TERMINAL_COLORS[second.terminalName] || '#ffffff';
+
+    // --- オシロの入力端子へ繋ぐ（直流電源 / 発振器 / AD/DA変換機 → オシロ）---
+    if (term.osc) {
+        // オシロの1つの入力端子に繋げる線は1本だけ。すでにあれば繋ぎ替える
+        wiringState.connections = wiringState.connections.filter(c => c.oscTerminal !== term.osc);
+        wiringState.connections.push({
+            type: sourceSide, [sourceSide + 'Terminal']: sourceTerm, oscTerminal: term.osc, color,
+        });
+
+        if (sourceSide === 'fg') {
+            applyFgSignals();
+            return { connected: true, message: `✅ 発振器(${sourceTerm}) ↔ オシロ(${term.osc}) を接続しました。右クリックで切断できます。` };
+        }
+        if (sourceSide === 'ps') {
+            applyAdDaSignals();
+            if (scopeState.inputSource !== 'power_supply') switchInputSource('power_supply');
+            return { connected: true, message: `✅ ${sourceTerm} ↔ ${term.osc} を接続しました。右クリックで切断できます。` };
+        }
+        scopeState.inputSource = 'fg';
+        applyAdDaSignals();
+        return { connected: true, message: `✅ AD/DA(${sourceTerm}) → オシロ(${term.osc}) を接続しました。右クリックで切断できます。` };
+    }
+
+    // --- AD/DA変換機の信号入力へ繋ぐ（直流電源 / 発振器 → TB1・TB2）---
+    if (term.adda) {
+        const sourceName = SIDE_NAMES[sourceSide];
+        if (term.adda !== 'TB1' && term.adda !== 'TB2') {
+            return { connected: false, message: `⚠️ ${sourceName}はAD/DA変換機のTB1(+)/TB2(-)端子に接続してください。` };
+        }
+
+        // 同じ入力端子にすでに線があれば繋ぎ替える
+        wiringState.connections = wiringState.connections.filter(c => c.addaTerminal !== term.adda);
+        wiringState.connections.push({
+            type: sourceSide + '-adda', [sourceSide + 'Terminal']: sourceTerm, addaTerminal: term.adda, color,
+        });
+
+        // TB1 に繋いだ機器に合わせて、入力切換(SW1)の位置も切り替える
+        if (term.adda === 'TB1') adDaState.inputSource = (sourceSide === 'ps') ? 'dc' : 'fg';
+
+        refreshScopeSignals();
+        return { connected: true, message: `✅ ${sourceName}(${sourceTerm}) → AD/DA(${term.adda}) を接続しました。右クリックで切断できます。` };
+    }
+
+    // --- それ以外（直流電源 ↔ 発振器）は接続できない ---
+    return { connected: false, message: '⚠️ この端子の組み合わせは接続できません。' };
+}
+
+// 端子に繋がっている線をすべて切断する
+function disconnectTerminal(terminalName) {
+    const key = getTerminalSide(terminalName) + 'Terminal';
+    const countBefore = wiringState.connections.length;
+    wiringState.connections = wiringState.connections.filter(c => c[key] !== terminalName);
+
+    cancelPendingTerminal();
+    refreshScopeSignals();
+    redrawWires();
+
+    if (wiringState.connections.length !== countBefore) {
+        showWireStatus('🔌 接続を切断しました。');
+    }
+}
+
+// すべての結線を外す（結線クリアボタン）
+function clearAllWires() {
+    wiringState.connections = [];
+    cancelPendingTerminal();
+    refreshScopeSignals();
+    redrawWires();
+    showWireStatus('🔌 すべての結線を解除しました。');
+}
+
+// 端子の右クリック → 切断
+function onContextMenu(e) {
+    const hotspot = e.target.closest('.hotspot');
+    if (!hotspot || !getTerminalSide(hotspot.title)) return;
+    e.preventDefault();
+    disconnectTerminal(hotspot.title);
+}
+
+
+// =======================================================================
+//  11. 結線 → オシロに映す信号への反映
+//
+//   scopeState.signals[CH] は、ここの関数だけが結線から作る。
+//     発振器 → オシロ          … applyFgSignals()
+//     AD/DA変換機 → オシロ      … applyAdDaSignals()
+//     直流電源 → オシロ         … signals は使わず、描画時に電圧を直接読む（getChannelVoltage）
+//     どこにも繋がっていない    … clearUnwiredChannelSignals() で 0V
+// =======================================================================
+
+// 機器の設定や結線が変わったときに呼ぶ。全チャンネルの信号を作り直す
+function refreshScopeSignals() {
+    applyFgSignals();
+    applyAdDaSignals();
+}
+
+// 発振器を直結したチャンネルの信号を作る
+function applyFgSignals() {
+    const isOutputting = fgState.power && fgState.outputOn;
+    const waveMap = { SINE: 'sine', SQUARE: 'square', RAMP: 'tri' };
+
+    ALL_CHANNELS.forEach(ch => {
+        const conn = getOscChannelConnection(ch);
+        if (!conn || conn.type !== 'fg') return;
+
+        if (!isOutputting) {
+            scopeState.signals[ch] = flatSignal('fg_wire');   // 出力OFF: 0V
+            return;
+        }
+
+        scopeState.signals[ch] = {
+            type: waveMap[fgState.waveform] || 'sine',
+            amplitude: fgState.amptd / 2,   // Vpp → 片側振幅
+            frequency: fgState.freq,
+            offset: fgState.offset,
+            source: 'fg_wire',
+        };
+        scopeState.inputSource = 'fg';
+        autoAdjustTimeAxis(fgState.freq);
+    });
+
+    clearUnwiredChannelSignals();
+}
+
+// AD/DA変換機の端子を繋いだチャンネルの信号を作る
+function applyAdDaSignals() {
+    clearUnwiredChannelSignals();
+
+    // 時間軸は、繋がっている端子のうち最も遅い信号に合わせる
+    // （速い方に合わせると、エイリアスで生じるゆっくりしたうねりが画面に収まらない）
     let minDisplayFreq = Infinity;
 
-    // AD/DA端子に接続されているオシロチャンネルを特定する
-    const addaConns = wiringState.connections.filter(c => c.type === 'adda');
-    const addaWiredChannels = new Set(
-        addaConns.map(c => c.oscTerminal === 'Ch1' ? 'CH1' : (c.oscTerminal === 'Ch3' ? 'CH3' : 'CH2'))
-    );
+    ALL_CHANNELS.forEach(ch => {
+        const conn = getOscChannelConnection(ch);
+        if (!conn || conn.type !== 'adda') return;
 
-    // 結線が外れたチャンネルはflatに戻す（以前の信号が残らないようにする）
-    // fg-adda結線が存在する場合のみ対象（直接fg→oscの場合は触らない）
-    const hasFgAddaConn = wiringState.connections.some(c => c.type === 'fg-adda');
-    if (hasFgAddaConn) {
-        ['CH1', 'CH2', 'CH3'].forEach(ch => {
-            if (!addaWiredChannels.has(ch)) {
-                scopeState.signals[ch] = { type: 'flat', amplitude: 0, frequency: 1, offset: 0, source: 'fg' };
-            }
-        });
-    }
+        scopeState.signals[ch] = makeAdDaTerminalSignal(conn.addaTerminal);
 
-    addaConns.forEach(conn => {
-            const channel = conn.oscTerminal === 'Ch1' ? 'CH1' : (conn.oscTerminal === 'Ch3' ? 'CH3' : 'CH2');
-            const termName = conn.addaTerminal || conn.psTerminal;
-            scopeState.signals[channel] = makeAdDaTerminalSignal(termName);
+        const freq = getAdDaTerminalDisplayFrequency(conn.addaTerminal);
+        if (freq && freq > 0 && freq < minDisplayFreq) minDisplayFreq = freq;
+    });
 
-            const freq = getAdDaTerminalDisplayFrequency(termName);
-            // 最も遅い信号（＝エイリアス発生時のDA出力側など）を基準に選ぶ。
-            // 最速側を基準にすると、エイリアスで生じるゆっくりしたうねりが
-            // 画面に収まらず見えなくなってしまうため。
-            if (freq && freq > 0 && freq < minDisplayFreq) minDisplayFreq = freq;
-        });
+    if (minDisplayFreq < Infinity) autoAdjustTimeAxis(minDisplayFreq);
 
-    // 接続されているAD/DA端子の中で最も遅い信号に合わせて時間軸を自動調整
-    if (minDisplayFreq < Infinity) {
-        autoAdjustTimeAxis(minDisplayFreq);
-    }
+    // 入力電圧や設定が変わるとLEDのコードも変わるので、基板下の状態表示も合わせる
+    updateAdDaStatus();
 
     if (scopeState.isOn) drawWaveform();
 }
 
-const originalUpdateOscilloscopeSignalForAdDa = updateOscilloscopeSignal;
-updateOscilloscopeSignal = function() {
-    originalUpdateOscilloscopeSignalForAdDa();
-    updateAdDaTerminalSignals();
-};
+// 線が繋がっていないチャンネルを「入力なし(0V)」に戻す。
+// これを忘れると、結線を切断しても前の波形が画面に残り続ける
+function clearUnwiredChannelSignals() {
+    ALL_CHANNELS.forEach(ch => {
+        if (getOscChannelConnection(ch)) return;
 
-document.addEventListener('contextmenu', function(e) {
-    const el = e.target.closest('.hotspot');
-    if (!el || !ADDA_TERMINALS.includes(el.title)) return;
-    e.preventDefault();
-    wiringState.connections = wiringState.connections.filter(c =>
-        c.addaTerminal !== el.title && c.psTerminal !== el.title && c.fgTerminal !== el.title
-    );
-    el.classList.remove('wire-connected', 'wire-selected');
-    wiringState.pendingTerminal = null;
+        // 内部テスト信号モードのテスト信号（source を持たない）は消さない
+        const signal = scopeState.signals[ch];
+        if (scopeState.inputSource === 'internal' && signal && !signal.source) return;
 
-    if (el.title === 'TB1') {
-        adDaState.tb1Wired = null;
-    }
-
-    updateAdDaPanelDisplay();
-    updateAdDaTerminalSignals();
-    redrawWires();
-}, true);
+        scopeState.signals[ch] = flatSignal('none');
+    });
+}
 
 
 // =======================================================================
-// AD/DA基板 スイッチ操作ロジック
-// (HTMLの <area onclick="clickAddaSwitch('SW5')"> 等から呼び出される想定)
+//  12. ホットスポット（機器画像の上のボタン）
+//
+//   index.html の <map> / <area> に書かれた座標から、機器画像の上に
+//   <div class="hotspot" title="ボタン名"> を自動生成する。
+//   クリック・ホイール・ツールチップは、この title を見て処理を振り分ける。
 // =======================================================================
-function clickAddaSwitch(switchId) {
-    if (!scopeState.ad_da) return;
 
-    if (switchId === 'SW5') {
-        // PDFの実験: 4bit と 8bit の切り替え
-        if (scopeState.ad_da.resolution === 8) {
-            scopeState.ad_da.resolution = 4;
-            console.log("量子化ビット数を 4bit に変更しました");
-        } else {
-            scopeState.ad_da.resolution = 8;
-            console.log("量子化ビット数を 8bit に変更しました");
+// -----------------------------------------------------------------------
+//  生成
+// -----------------------------------------------------------------------
+
+function buildHotspots() {
+    document.querySelectorAll('map').forEach(map => {
+        const container = document.getElementById(MAP_TO_CONTAINER[map.name]);
+        if (!container) return;
+
+        map.querySelectorAll('area').forEach(area => {
+            const coordsStr = area.getAttribute('coords');
+            if (!coordsStr) return;
+            const coords = coordsStr.split(',').map(Number);
+            const title = area.getAttribute('title') || area.getAttribute('alt') || '';
+
+            const div = document.createElement('div');
+            div.className = 'hotspot';
+            div.title = title;
+
+            // 実装済み = 青 / 未実装 = 赤
+            const isImplemented = container.id === 'model-adda'
+                               || IMPLEMENTED_BUTTONS.has(title)
+                               || menuDataHantek[title]
+                               || menuDataAgilent[title];
+            div.classList.add(isImplemented ? 'implemented' : 'unimplemented');
+
+            // 位置と大きさ（rect: 左上と右下の2点 / circle: 中心と半径）
+            if (area.getAttribute('shape') === 'rect') {
+                const [x1, y1, x2, y2] = coords;
+                div.style.left   = Math.min(x1, x2) + 'px';
+                div.style.top    = Math.min(y1, y2) + 'px';
+                div.style.width  = Math.abs(x2 - x1) + 'px';
+                div.style.height = Math.abs(y2 - y1) + 'px';
+            } else if (area.getAttribute('shape') === 'circle') {
+                const [x, y, r] = coords;
+                div.style.left   = (x - r) + 'px';
+                div.style.top    = (y - r) + 'px';
+                div.style.width  = (r * 2) + 'px';
+                div.style.height = (r * 2) + 'px';
+                div.style.borderRadius = '50%';
+            }
+
+            container.appendChild(div);
+        });
+    });
+}
+
+// -----------------------------------------------------------------------
+//  クリック
+// -----------------------------------------------------------------------
+
+// 機器コンテナ上のクリックを、端子 → 結線 / ボタン → 各機器の処理 に振り分ける
+function onHotspotClick(e) {
+    const container = e.currentTarget;
+    const hotspot = e.target;
+    if (!hotspot.classList.contains('hotspot')) return;
+
+    const title = hotspot.title;
+    const side = getTerminalSide(title);
+
+    if (side === 'osc') {
+        // オシロの入力端子は、チャンネル選択ボタンも兼ねている。
+        // 1本目を選択済みのとき、または Shift+クリックのときだけ結線として扱う
+        if (wiringState.pendingTerminal || e.shiftKey) {
+            handleTerminalClick(title, hotspot);
+            return;
         }
-    } 
-    else if (switchId === 'SW_CLOCK') { // サンプリングクロック切替スイッチの名前は適宜変更してください
-        // PDFの実験: サンプリング周期 (Ts) を段階的に切り替える
-        const periods = [5, 50, 200, 500]; // 単位: µs
-        let currentIndex = periods.indexOf(scopeState.ad_da.samplingPeriod);
-        let nextIndex = (currentIndex + 1) % periods.length;
-        
-        scopeState.ad_da.samplingPeriod = periods[nextIndex];
-        console.log(`サンプリング周期を ${periods[nextIndex]}µs に変更しました`);
-    }
-
-    // パラメータが変更されたため、波形を描画し直す
-    // ※ 現在の構成に合わせて、Agilent描画等を呼び出してください
-    if (scopeState.isOn) {
-        if (typeof drawAgilent === 'function') drawAgilent();
-        // または drawWaveform(); 
-    }
-}
-
-
-// =======================================================================
-// 機器の個別サイズ調整ロジック (プルダウン・スライダー連動 修正版)
-// =======================================================================
-
-// 各機器の現在の倍率を保存しておくオブジェクト (IDを修正)
-const instrumentScales = {
-    'model-agilent': 1.0,
-    'model-hantek': 1.0,
-    'model-adda': 1.0,
-    'model-fg': 1.0,
-    'model-ps': 1.0
-};
-
-function updateSizeSliderDisplay() {
-    const targetId = document.getElementById('size-target-select').value;
-    const currentScale = instrumentScales[targetId] || 1.0;
-    
-    document.getElementById('size-slider').value = currentScale;
-    document.getElementById('val-size-display').innerText = currentScale.toFixed(1) + 'x';
-}
-
-function applySizeChange() {
-    const targetId = document.getElementById('size-target-select').value;
-    const scaleValue = parseFloat(document.getElementById('size-slider').value);
-    
-    instrumentScales[targetId] = scaleValue;
-    document.getElementById('val-size-display').innerText = scaleValue.toFixed(1) + 'x';
-    
-    const container = document.getElementById(targetId);
-    if (!container) {
-        console.error("サイズ変更対象のIDが見つかりません: " + targetId);
+    } else if (side) {
+        handleTerminalClick(title, hotspot);
         return;
     }
 
-    // 1. 変形適用
-    container.style.transform = `scale(${scaleValue})`;
-    container.style.transformOrigin = 'top left';
+    if (container.id === 'model-ps')        handlePsButton(title);
+    else if (container.id === 'model-fg')   handleFgButton(title);
+    else if (container.id === 'model-adda') handleAddaSwitch(title);
+    else                                    handleOscButton(title, hotspot);
+}
 
-    // 2. ドラッグ移動と競合しないようマージンをリセット
-    container.style.marginLeft = '0px';
-    container.style.marginTop = '0px';
-    container.style.marginBottom = '0px';
-    container.style.marginRight = '0px';
-
-    // 3. 親要素（ドラッグ判定枠）のサイズを追従させる
-    const img = container.querySelector('img');
-    if (img) {
-        const scaledWidth = img.naturalWidth * scaleValue;
-        const scaledHeight = img.naturalHeight * scaleValue;
-        
-        const wrapper = container.closest('.draggable-equipment');
-        if (wrapper) {
-            wrapper.style.setProperty('width', `${scaledWidth}px`, 'important');
-            wrapper.style.setProperty('height', `${scaledHeight}px`, 'important');
+// オシロスコープのボタン操作（ツマミは onHotspotWheel で処理する）
+function handleOscButton(title, hotspot) {
+    // 電源
+    if (title === '電源ボタン') {
+        hotspot.classList.toggle('active');
+        scopeState.isOn = hotspot.classList.contains('active');
+        if (scopeState.isOn) {
+            // 電源ON直後は RUN 状態で、CH1 のメニューを開いておく
+            scopeState.isRunning = true;
+            scopeState.activeChannel = 'CH1';
+            scopeState.currentMenu = 'CH1_MENU';
+            updateControlPanelUI();
+        } else {
+            scopeState.currentMenu = null;
         }
+        return;
+    }
+
+    // チャンネルの選択（メニューボタン または 入力端子）。もう一度押すとメニューを閉じる
+    const channelButtons = {
+        CH1_MENU: 'CH1', Ch1: 'CH1',
+        CH2_MENU: 'CH2', Ch2: 'CH2',
+        CH3_MENU: 'CH3', Ch3: 'CH3',
+    };
+    const ch = channelButtons[title];
+    if (ch) {
+        if (!scopeState.isOn) return;
+        if (scopeState.currentMenu === ch + '_MENU') {
+            scopeState.currentMenu = null;
+        } else {
+            scopeState.activeChannel = ch;
+            scopeState.currentMenu = ch + '_MENU';
+        }
+        updateControlPanelUI();
+        return;
+    }
+
+    // RUN / STOP
+    if (title === 'RunStop') {
+        scopeState.isRunning = !scopeState.isRunning;
+        return;
+    }
+
+    // 以下は電源ONのときだけ反応する
+    if (!scopeState.isOn) return;
+
+    if (title === 'AutoSet') {
+        // 見やすい設定に戻す（1V/div・0.1s/div）
+        scopeState.voltIndexCH1 = 6;
+        scopeState.voltIndexCH2 = 6;
+        scopeState.timeIndex = 15;
+        scopeState.timeOffset = 0;
+        scopeState.currentMenu = null;
+
+    } else if (title === 'Meas' || title === 'Measure') {
+        // 自動計測の表示ON/OFF（メニューも一緒に開閉する）
+        scopeState.showMeasure = !scopeState.showMeasure;
+        scopeState.currentMenu = scopeState.showMeasure ? 'Measure' : null;
+
+    } else if (title === 'Cursr') {
+        // 押すたびに操作するカーソルが変わる: 非表示 → A → B（時間）→ Y1 → Y2（電圧）→ 非表示
+        const cursor = scopeState.cursor;
+        const order = ['A', 'B', 'Y1', 'Y2'];
+        const next = cursor.show ? order[order.indexOf(cursor.target) + 1] : order[0];
+        cursor.show = (next !== undefined);
+        if (cursor.show) cursor.target = next;
+        drawWaveform();
+
+    } else if (MENU_DATA[currentModelId][title]) {
+        // メニューを持つボタン（Acquire など）: 開く / 同じメニューなら閉じる
+        scopeState.currentMenu = (scopeState.currentMenu === title) ? null : title;
     }
 }
+
+// オシロの画面をクリック: カーソル表示中なら、操作中のカーソルをクリックした位置へ移動する
+function onScreenClick(e) {
+    const cursor = scopeState.cursor;
+    if (!scopeState.isOn || !cursor.show) return;
+
+    // クリック位置を、ズームに関係なく canvas 上の座標 [px] に直す
+    const screen = e.currentTarget;
+    const rect = screen.getBoundingClientRect();
+    const x = Math.round((e.clientX - rect.left) * (screen.width / rect.width));
+    const y = Math.round((e.clientY - rect.top) * (screen.height / rect.height));
+
+    if (cursor.target === 'A')       cursor.posA = x;
+    else if (cursor.target === 'B')  cursor.posB = x;
+    else if (cursor.target === 'Y1') cursor.offsetY1 = Math.round(screen.height / 2 - y);
+    else if (cursor.target === 'Y2') cursor.offsetY2 = Math.round(screen.height / 2 - y);
+    drawWaveform();
+}
+
+// -----------------------------------------------------------------------
+//  マウスホイール（ツマミ）
+// -----------------------------------------------------------------------
+
+// レンジの添字を1段階動かす（配列の端で止まる）
+function stepIndex(index, deltaY, length) {
+    if (deltaY > 0) return Math.min(index + 1, length - 1);
+    return Math.max(index - 1, 0);
+}
+
+function onHotspotWheel(e) {
+    if (!e.target.classList.contains('hotspot')) return;
+    const title = e.target.title;
+    const turnedUp = e.deltaY < 0;   // ホイールを奥へ回した
+
+    // --- オシロ: 電圧軸ツマミ（ホイールを手前に回すとレンジが広がる）---
+    if (['KNOB_VOLT', 'Volt1', 'Volt2', 'Volt3', 'Volt4'].includes(title)) {
+        e.preventDefault();
+        // Volt1〜3 は各チャンネル専用。それ以外（Hantek の共通ツマミ・Volt4）は選択中のチャンネルを操作する
+        const ch = { Volt1: 'CH1', Volt2: 'CH2', Volt3: 'CH3' }[title] || scopeState.activeChannel;
+        const key = 'voltIndex' + ch;
+        scopeState[key] = stepIndex(scopeState[key], e.deltaY, VOLT_STEPS.length);
+
+    // --- オシロ: 時間軸ツマミ ---
+    } else if (title === 'KNOB_TIME') {
+        e.preventDefault();
+        scopeState.timeIndex = stepIndex(scopeState.timeIndex, e.deltaY, TIME_STEPS.length);
+
+    // --- オシロ: トリガレベルツマミ（CH1のレンジの半分ずつ動く）---
+    } else if (title === 'Level') {
+        e.preventDefault();
+        const step = VOLT_STEPS[scopeState.voltIndexCH1] * 0.5;
+        scopeState.trigger.level += turnedUp ? step : -step;
+
+    // --- オシロ: 位置ツマミ（波形を上下に動かす）---
+    } else if (title === 'Pos1' || title === 'Pos2' || title === 'Pos3') {
+        e.preventDefault();
+        if (!scopeState.isOn) return;
+        const key = 'positionCH' + title.slice(-1);
+        scopeState[key] += turnedUp ? 5 : -5;
+
+    // --- オシロ: カーソルツマミ（選択中のカーソルを動かす）---
+    //   時間カーソル A・B  : 手前に回すと右へ（5px ずつ）
+    //   電圧カーソル Y1・Y2: 奥へ回すと上へ（細かく読めるよう 1px ずつ）
+    } else if (title === 'Cursrツマミ') {
+        e.preventDefault();
+        const cursor = scopeState.cursor;
+        if (!cursor.show) return;
+        if (cursor.target === 'A')       cursor.posA += (e.deltaY > 0) ? 5 : -5;
+        else if (cursor.target === 'B')  cursor.posB += (e.deltaY > 0) ? 5 : -5;
+        else if (cursor.target === 'Y1') cursor.offsetY1 += turnedUp ? 1 : -1;
+        else if (cursor.target === 'Y2') cursor.offsetY2 += turnedUp ? 1 : -1;
+        drawWaveform();
+
+    // --- 直流電源: 電圧ツマミ（0〜30V。刻みは粗調整 0.1V / FINE 0.01V）---
+    } else if (title === 'volt') {
+        e.preventDefault();
+        if (!psState.isOn) return;
+        stepPsVoltage(turnedUp ? +1 : -1);
+
+    // --- 直流電源: 電流ツマミ（0〜3A、0.01A刻み）---
+    } else if (title === 'curr') {
+        e.preventDefault();
+        if (!psState.isOn) return;
+        const channel = psState[psState.activeChannel.toLowerCase()];
+        channel.current = turnedUp ? Math.min(3.00, channel.current + 0.01) : Math.max(0.00, channel.current - 0.01);
+        updatePSDisplay();
+    }
+}
+
+// -----------------------------------------------------------------------
+//  ツールチップ（ボタンの説明）
+// -----------------------------------------------------------------------
+
+function onHotspotMouseOver(e) {
+    if (e.target.classList.contains('hotspot') && descriptions[e.target.title]) {
+        tooltip.innerText = descriptions[e.target.title];
+        tooltip.style.display = 'block';
+    }
+}
+
+function onHotspotMouseMove(e) {
+    if (tooltip.style.display === 'block') {
+        tooltip.style.left = (e.pageX + 15) + 'px';
+        tooltip.style.top  = (e.pageY + 15) + 'px';
+    }
+}
+
+function onHotspotMouseOut() {
+    tooltip.style.display = 'none';
+}
+
+
+// =======================================================================
+//  13. 実技テストモード
+// =======================================================================
+
+const testState = {
+    active: false,
+    currentQuestionIndex: 0,
+};
+
+// 問題の定義
+// setup: 問題開始時にオシロの設定をわざと狂わせる関数
+// check: ユーザーの設定が正しいか判定する関数 (trueなら正解)
+const quizData = [
+    {
+        id: 1,
+        text: "【第1問】CH1の波形が画面からはみ出しています。<br>電圧レンジ(Volts/Div)を調整して、波形全体が見えるように「2.00V」に設定してください。",
+        setup: function() {
+            // 初期設定: わざと拡大しすぎてはみ出させる
+            scopeState.isOn = true;
+            scopeState.activeChannel = 'CH1';
+            scopeState.voltIndexCH1 = 3; // 0.1V (はみ出す設定)
+            scopeState.signals['CH1'].type = 'sine';
+            scopeState.signals['CH1'].amplitude = 3.0; // 振幅3V
+            drawWaveform();
+        },
+        check: function() {
+            // 正解条件: CH1の電圧インデックスが 2.0V (Index=7) になっていること
+            // VOLT_STEPS = [0.01, ..., 1.0(6), 2.0(7), ...]
+            return VOLT_STEPS[scopeState.voltIndexCH1] === 2.0;
+        },
+        hint: "ヒント: 画像上の「電圧ツマミ」の上でマウスホイールを手前に回すと、レンジが広がります。"
+    },
+    {
+        id: 2,
+        text: "【第2問】波形の周期が細かすぎて見づらい状態です。<br>時間軸(Time/Div)を調整して、ゆったり見えるように「5.00ms」に設定してください。",
+        setup: function() {
+            // 初期設定: 時間軸を細かくしすぎる
+            scopeState.timeIndex = 6;
+            drawWaveform();
+        },
+        check: function() {
+            // 正解条件: 時間軸が 5ms (0.005s)
+            // TIME_STEPS配列の中から 0.005 を探すか、値を直接比較
+            const currentT = TIME_STEPS[scopeState.timeIndex];
+            // 浮動小数点計算の誤差を考慮して差分で比較するのが安全
+            return Math.abs(currentT - 0.005) < 0.0001;
+        },
+        hint: "ヒント: 右上の「時間ツマミ」を操作してください。"
+    },
+    {
+        id: 3,
+        text: "【第3問: 信号の切り替え】<br>現在、画面には丸みを帯びた「正弦波(Sine)」が表示されています。<br>左側のコントロールパネルにあるボタンを操作して、入力信号を角張った「矩形波(Square)」に切り替えてください。",
+        setup: function() {
+            // 初期設定: 見やすいように調整しつつ、必ずSine波にする
+            scopeState.isOn = true;
+            scopeState.activeChannel = 'CH1';
+
+            scopeState.signals['CH1'].type = 'sine';
+            scopeState.signals['CH1'].amplitude = 2.0;
+
+            scopeState.voltIndexCH1 = 6; // 1.0V/div (見やすい大きさ)
+            scopeState.timeIndex = 15;   // 0.1s (見やすい周期)
+
+            updateControlPanelUI(); // パネルのボタン表示を同期
+            drawWaveform();
+        },
+        check: function() {
+            // 正解条件: CH1の信号タイプが 'square' になっているか
+            return scopeState.signals['CH1'].type === 'square';
+        },
+        hint: "ヒント: 画面左側（CONTROL PANEL）の下の方にある「SIGNAL GEN」エリアを見てください。「Square」というボタンがあります。"
+    },
+    {
+        id: 4,
+        text: "【最終問題】波形の動きを止めて(STOP状態にして)ください。",
+        setup: function() {
+            scopeState.isRunning = true;
+        },
+        check: function() {
+            return scopeState.isRunning === false;
+        },
+        hint: "ヒント: 右上の「Run/Stop」ボタンを押します。"
+    }
+];
+
+function startTestMode() {
+    testState.active = true;
+    testState.currentQuestionIndex = 0;
+
+    document.getElementById('test-panel').style.display = 'block';
+    showQuestion();
+    document.getElementById('test-panel').scrollIntoView({ behavior: 'smooth' });
+}
+
+// 現在の問題を表示し、その問題の初期状態（setup）にオシロを設定する
+function showQuestion() {
+    const q = quizData[testState.currentQuestionIndex];
+
+    document.getElementById('question-text').innerHTML = q.text;
+    document.getElementById('question-counter').innerText =
+        `Q ${testState.currentQuestionIndex + 1} / ${quizData.length}`;
+
+    const fb = document.getElementById('test-feedback');
+    fb.innerHTML = '';
+    fb.className = '';
+
+    document.getElementById('btn-check-answer').style.display = 'inline-block';
+    document.getElementById('btn-next-question').style.display = 'none';
+
+    if (q.setup) {
+        q.setup();
+        updateControlPanelUI();
+    }
+}
+
+// 「解答する」: 現在の問題の正解条件（check）を判定する
+function checkTestAnswer() {
+    const q = quizData[testState.currentQuestionIndex];
+    const fb = document.getElementById('test-feedback');
+
+    if (!q.check()) {
+        fb.innerHTML = '不正解です。<br>' + q.hint;
+        fb.className = 'feedback-wrong';
+        return;
+    }
+
+    fb.innerHTML = '正解です！素晴らしい！';
+    fb.className = 'feedback-correct';
+    document.getElementById('btn-check-answer').style.display = 'none';
+
+    // 最後の問題でなければ「次の問題へ」を出す
+    if (testState.currentQuestionIndex < quizData.length - 1) {
+        document.getElementById('btn-next-question').style.display = 'inline-block';
+    } else {
+        fb.innerHTML += '<br>すべてのテストが終了しました！';
+    }
+}
+
+function nextQuestion() {
+    testState.currentQuestionIndex++;
+    showQuestion();
+}
+
+// 「中断して閉じる」
+function quitTestMode() {
+    testState.active = false;
+    document.getElementById('test-panel').style.display = 'none';
+    document.getElementById('test-feedback').innerHTML = '';
+    document.getElementById('test-feedback').className = '';
+}
+
+
+// =======================================================================
+//  14. 起動処理
+// =======================================================================
+
+// 機器画像の上にボタンを生成する
+buildHotspots();
+
+// 機器ごとの操作イベント
+document.querySelectorAll('.instrument-container').forEach(container => {
+    container.addEventListener('click', onHotspotClick);
+    container.addEventListener('wheel', onHotspotWheel, { passive: false });
+    container.addEventListener('mouseover', onHotspotMouseOver);
+    container.addEventListener('mousemove', onHotspotMouseMove);
+    container.addEventListener('mouseout', onHotspotMouseOut);
+});
+
+// オシロの画面クリック（カーソルの移動）
+document.querySelectorAll('.screen-area canvas').forEach(screen => {
+    screen.addEventListener('click', onScreenClick);
+});
+
+// AD/DA変換機のサンプリング周期切換（クリックで次へ、ホイールで前後に切り替え）
+const samplingHotspot = document.getElementById('adda-sampling-hotspot');
+samplingHotspot.addEventListener('click', e => {
+    e.stopPropagation();
+    cycleAdDaSampling();
+});
+samplingHotspot.addEventListener('wheel', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    cycleAdDaSampling(e.deltaY < 0 ? -1 : 1);
+});
+
+// 結線の切断（端子を右クリック）
+document.addEventListener('contextmenu', onContextMenu);
+
+// 機器のドラッグ移動
+document.addEventListener('mousedown', onDragStart);
+document.addEventListener('mousemove', onDragMove);
+document.addEventListener('mouseup', onDragEnd);
+
+// 実験手順のモーダルは、外側（暗い部分）をクリックしても閉じる
+document.addEventListener('click', e => {
+    if (e.target.id === 'experiment-modal') closeExperimentModal();
+});
+
+// 画像の読み込み完了時とウィンドウのリサイズ時に、表示倍率とワイヤーを合わせ直す
+window.addEventListener('load', autoFit);
+window.addEventListener('resize', autoFit);
+window.addEventListener('resize', redrawWires);
+
+// 状態表示バーを初期状態に合わせる
+renderPsDisplay();
+updateAdDaStatus();
+
+// 描画ループ開始
+animationLoop();

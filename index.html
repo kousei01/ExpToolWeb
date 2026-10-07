@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <title>実験器具学習サイト</title>
-    <!-- CSSファイルの読み込み -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,9 +12,7 @@
 <!-- ========================================== -->
 <div class="control-panel">
 
-
-
-    <!-- 4. 情報グループ (新規追加) -->
+    <!-- 説明書 -->
     <div class="control-group">
         <span class="panel-label">INFO</span>
         <div class="button-group">
@@ -24,8 +21,8 @@
     </div>
 
     <div class="panel-divider"></div>
-    
-    <!-- 1. モデル切り替えグループ -->
+
+    <!-- オシロスコープの機種切替 -->
     <div class="control-group">
         <span class="panel-label">MODEL SELECT</span>
         <div class="button-group">
@@ -36,6 +33,7 @@
 
     <div class="panel-divider"></div>
 
+    <!-- オシロスコープの入力の種類 -->
     <div class="control-group">
         <span class="panel-label">INPUT SOURCE</span>
         <div class="button-group">
@@ -44,10 +42,9 @@
         </div>
     </div>
 
-    <!-- 区切り線 -->
     <div class="panel-divider"></div>
 
-    <!-- 2. ズーム操作グループ -->
+    <!-- 全体の表示倍率 -->
     <div class="control-group">
         <span class="panel-label">VIEW SCALE</span>
         <div class="zoom-controls">
@@ -59,15 +56,15 @@
         </div>
     </div>
 
-    <!-- 区切り線 -->
     <div class="panel-divider"></div>
 
+    <!-- 機器ごとの大きさ調整 -->
     <div class="control-group">
         <span class="panel-label">SIZE ADJUST</span>
         <div style="display: flex; align-items: center; gap: 10px; margin-left: 10px;">
-            
-            <select id="size-target-select" class="panel-btn" 
-                    style="padding: 5px 10px; background: #34495e; color: white; border: none; border-radius: 4px; cursor: pointer;" 
+
+            <select id="size-target-select" class="panel-btn"
+                    style="padding: 5px 10px; background: #34495e; color: white; border: none; border-radius: 4px; cursor: pointer;"
                     onchange="updateSizeSliderDisplay()">
                 <option value="model-agilent">オシロスコープ (Agilent)</option>
                 <option value="model-hantek">オシロスコープ (Hantek)</option>
@@ -75,17 +72,17 @@
                 <option value="model-fg">信号発生器</option>
                 <option value="model-ps">直流電源</option>
             </select>
-            
-            <input type="range" id="size-slider" min="0.5" max="2.0" step="0.1" value="1.0" 
+
+            <input type="range" id="size-slider" min="0.5" max="2.0" step="0.1" value="1.0"
                    oninput="applySizeChange()">
             <span id="val-size-display" style="color: #333; font-size: 14px; min-width: 40px; text-align: right;">1.0x</span>
-            
+
         </div>
     </div>
 
     <div class="panel-divider"></div>
 
-    <!-- 結線コントロール -->
+    <!-- 結線 -->
     <div class="control-group">
         <span class="panel-label">WIRING</span>
         <div class="button-group">
@@ -96,12 +93,16 @@
         </span>
     </div>
 
+    <!-- 実技テスト -->
     <div style="text-align:center; margin-bottom:10px;">
         <button class="panel-btn active" style="background:#e74c3c; border-color:#c0392b;" onclick="startTestMode()">★ 実技テストを開始する</button>
     </div>
-    
+
 </div>
 
+<!-- ========================================== -->
+<!-- 実技テストパネル（「実技テストを開始する」で表示） -->
+<!-- ========================================== -->
 <div id="test-panel" class="test-panel" style="display:none;">
     <div class="test-header">
         <h3>実技試験モード</h3>
@@ -112,242 +113,300 @@
         <div id="test-feedback"></div>
     </div>
     <div class="test-footer">
-    <button id="btn-check-answer" class="panel-btn" onclick="checkTestAnswer()">解答する</button>
-    <button id="btn-next-question" class="panel-btn" style="display:none;" onclick="nextQuestion()">次の問題へ</button>
-    
-    <button id="btn-quit-test" class="panel-btn" onclick="quitTestMode()" 
-            style="background-color: #95a5a6; border-color: #7f8c8d; margin-left: 10px;">
-        中断して閉じる
-    </button>
+        <button id="btn-check-answer" class="panel-btn" onclick="checkTestAnswer()">解答する</button>
+        <button id="btn-next-question" class="panel-btn" style="display:none;" onclick="nextQuestion()">次の問題へ</button>
+
+        <button id="btn-quit-test" class="panel-btn" onclick="quitTestMode()"
+                style="background-color: #95a5a6; border-color: #7f8c8d; margin-left: 10px;">
+            中断して閉じる
+        </button>
+    </div>
 </div>
 
-</div>
 
-
-<!-- メインステージ（ここが重要：オシロスコープ表示エリア） -->
+<!-- ========================================== -->
+<!-- メインステージ（機器を並べる作業スペース） -->
+<!--
+    機器1台 = <div class="draggable-equipment">（ドラッグで動かす外枠）
+                └ <div class="instrument-container">（本体。画像とボタン類）
+                     ├ <img>  機器の写真
+                     └ <map>  ボタン・端子の位置の定義。JSがこの <area> の座標を読み、
+                              同じ位置に <div class="hotspot" title="..."> を生成する。
+                              ボタン名は title（無ければ alt）で、script.js はこの名前で処理を振り分ける。
+-->
+<!-- ========================================== -->
 <div class="main-stage">
+
+    <!-- ====================================== -->
+    <!-- オシロスコープ（機種は MODEL SELECT で切替） -->
+    <!-- ====================================== -->
     <div id="osc-container" class="draggable-equipment" style="top: 20px; left: 20px;">
-    <!-- ========================================== -->
-    <!-- モデルA: Hantek -->
-    <!-- ========================================== -->
-        <div id="model-hantek" class="instrument-container active-model" style="display: none;">
+
+        <!-- 機種A: Hantek -->
+        <div id="model-hantek" class="instrument-container" style="display: none;">
             <img src="oscilloscope-body.png" alt="Hantekオシロスコープ">
-            
+
             <div id="screen-hantek" class="screen-area">
                 <canvas id="canvas-hantek" width="610" height="360"></canvas>
             </div>
-            
+
             <map name="map-hantek">
-                <!-- 既存のボタン定義 -->
-                <area target="" alt="電源ボタン" title="電源ボタン" coords="134,703,18" shape="circle">
-                <area target="" alt="CH1_MENU" title="CH1_MENU" coords="880,516,835,488" shape="rect">
-                <area target="" alt="CH2_MENU" title="CH2_MENU" coords="968,487,1013,517" shape="rect">
-                <area target="" alt="RunStop" title="RunStop" coords="1202,269,1246,298" shape="rect">
-                <area target="" alt="AutoSet" title="AutoSet" coords="1131,241,1177,270" shape="rect">
-                <area target="" alt="Single" title="Single" coords="1131,292,1177,322" shape="rect">
-                <area target="" alt="Acquire" title="Acquire" coords="1061,238,1106,270" shape="rect">
-                <area target="" alt="Measure" title="Measure" coords="994,241,1039,268" shape="rect">
-                <area target="" alt="SaveRecall" title="SaveRecall" coords="927,240,972,269" shape="rect">
-                <area target="" alt="Display" title="Display" coords="1061,292,1106,322" shape="rect">
-                <area target="" alt="Cursor" title="Cursor" coords="994,292,1038,321" shape="rect">
-                <area target="" alt="Utility" title="Utility" coords="927,293,971,320" shape="rect">
-                <area target="" alt="F1" title="F1" coords="733,337,770,363" shape="rect">
-                <area target="" alt="F2" title="F2" coords="733,398,770,419" shape="rect">
-                <area target="" alt="F3" title="F3" coords="733,456,771,479" shape="rect">
-                <area target="" alt="F4" title="F4" coords="733,515,771,539" shape="rect">
-                <area target="" alt="F5" title="F5" coords="733,573,771,596" shape="rect">
-                <area target="" alt="Ch1" title="Ch1" coords="861,683,18" shape="circle">
-                <area target="" alt="Ch2" title="Ch2" coords="992,684,18" shape="circle">
-                <area target="" alt="電圧調整" title="KNOB_VOLT" href="" coords="861,583,30" shape="circle">
-                <area target="" alt="時間調整" title="KNOB_TIME" href="" coords="991,582,31" shape="circle">
+                <area alt="電源ボタン" title="電源ボタン" coords="134,703,18" shape="circle">
+                <area alt="CH1_MENU" title="CH1_MENU" coords="880,516,835,488" shape="rect">
+                <area alt="CH2_MENU" title="CH2_MENU" coords="968,487,1013,517" shape="rect">
+                <area alt="RunStop" title="RunStop" coords="1202,269,1246,298" shape="rect">
+                <area alt="AutoSet" title="AutoSet" coords="1131,241,1177,270" shape="rect">
+                <area alt="Single" title="Single" coords="1131,292,1177,322" shape="rect">
+                <area alt="Acquire" title="Acquire" coords="1061,238,1106,270" shape="rect">
+                <area alt="Measure" title="Measure" coords="994,241,1039,268" shape="rect">
+                <area alt="SaveRecall" title="SaveRecall" coords="927,240,972,269" shape="rect">
+                <area alt="Display" title="Display" coords="1061,292,1106,322" shape="rect">
+                <area alt="Cursor" title="Cursor" coords="994,292,1038,321" shape="rect">
+                <area alt="Utility" title="Utility" coords="927,293,971,320" shape="rect">
+                <area alt="F1" title="F1" coords="733,337,770,363" shape="rect">
+                <area alt="F2" title="F2" coords="733,398,770,419" shape="rect">
+                <area alt="F3" title="F3" coords="733,456,771,479" shape="rect">
+                <area alt="F4" title="F4" coords="733,515,771,539" shape="rect">
+                <area alt="F5" title="F5" coords="733,573,771,596" shape="rect">
+                <area alt="Ch1" title="Ch1" coords="861,683,18" shape="circle">
+                <area alt="Ch2" title="Ch2" coords="992,684,18" shape="circle">
+                <area alt="電圧調整" title="KNOB_VOLT" coords="861,583,30" shape="circle">
+                <area alt="時間調整" title="KNOB_TIME" coords="991,582,31" shape="circle">
             </map>
         </div>
 
-        <!-- ========================================== -->
-        <!-- モデルB: Agilent -->
-        <!-- ========================================== -->
-        <div id="model-agilent" class="instrument-container active-model">
+        <!-- 機種B: Agilent -->
+        <div id="model-agilent" class="instrument-container">
             <img src="agilent-body.png" alt="Agilentオシロスコープ">
-            
+
             <div id="screen-agilent" class="screen-area">
                 <canvas id="canvas-agilent" width="1110" height="665"></canvas>
             </div>
 
             <map name="map-agilent">
-                <area target="" alt="電源ボタン" title="電源ボタン" coords="172,1030,250,1084" shape="rect">
-                <area target="" alt="CH1_MENU" title="CH1_MENU" coords="1519,743,1561,809" shape="rect">
-                <area target="" alt="CH2_MENU" title="CH2_MENU" coords="1708,741,1742,807" shape="rect">
-                <area target="" alt="CH3_MENU" title="CH3_MENU" coords="1895,741,1931,805" shape="rect">
-                <area target="" alt="CH4_MENU" title="CH4_MENU" coords="2081,740,2119,808" shape="rect">
-                <area target="" alt="RunStop" title="RunStop" coords="1894,103,2007,154" shape="rect">
-                <area target="" alt="Single" title="Single" coords="2037,102,2152,153" shape="rect">
-                <area target="" alt="時間ツマミ" title="KNOB_TIME" coords="1494,167,41" shape="circle">
-                <area target="" alt="AutoSet" title="AutoSet" href="" coords="2066,205,2124,243" shape="rect">
-                <area target="" alt="Default" title="Default" href="" coords="1920,202,1978,238" shape="rect">
-                <area target="" alt="Horiz" title="Horiz" href="" coords="1567,100,1630,136" shape="rect">
-                <area target="" alt="Search" title="Search" href="" coords="1566,171,1630,209" shape="rect">
-                <area target="" alt="Navigate" title="Navigate" href="" coords="1566,240,1628,278" shape="rect">
-                <area target="" alt="Volt1" title="Volt1" coords="1544,673,36" shape="circle">
-                <area target="" alt="Volt2" title="Volt2" href="" coords="1731,671,38" shape="circle">
-                <area target="" alt="Volt3" title="Volt3" href="" coords="1922,675,38" shape="circle">
-                <area target="" alt="Volt4" title="Volt4" href="" coords="2108,669,38" shape="circle">
-                <area target="" alt="Pos1" title="Pos1" href="" coords="1542,877,27" shape="circle">
-                <area target="" alt="Pos2" title="Pos2" href="" coords="1727,876,27" shape="circle">
-                <area target="" alt="Pos3" title="Pos3" href="" coords="1918,871,28" shape="circle">
-                <area target="" alt="Pos4" title="Pos4" href="" coords="2106,872,28" shape="circle">
-                <area target="" alt="Trigger" title="Trigger" href="" coords="1442,319,1506,355" shape="rect">
-                <area target="" alt="Level" title="Level" href="" coords="1576,376,29" shape="circle">
-                <area target="" alt="Cursr" title="Cursr" href="" coords="1747,318,1807,354" shape="rect">
-                <area target="" alt="Meas" title="Meas" href="" coords="1747,392,1807,428" shape="rect">
-                <area target="" alt="Cursrツマミ" title="Cursrツマミ" href="" coords="1883,376,29" shape="circle">
-                <area target="" alt="Math" title="Math" href="" coords="1972,465,2028,505" shape="rect">
-                <area target="" alt="Serial" title="Serial" href="" coords="1972,314,2032,352" shape="rect">
-                <area target="" alt="Ref" title="Ref" href="" coords="1970,540,2028,576" shape="rect">
-                <area target="" alt="Display" title="Display" href="" coords="1847,467,1910,503" shape="rect">
-                <area target="" alt="Acquire" title="Acquire" href="" coords="1747,463,1807,503" shape="rect">
-                <area target="" alt="SavaRecall" title="SavaRecall" href="" coords="1747,545,1807,577" shape="rect">
-                <area target="" alt="Print" title="Print" href="" coords="1845,545,1912,581" shape="rect">
-                <area target="" alt="Help" title="Help" href="" coords="1791,758,1849,794" shape="rect">
-                <area target="" alt="Soft1" title="Soft1" href="" coords="287,923,351,969" shape="rect">
-                <area target="" alt="Soft2" title="Soft2" href="" coords="462,928,528,966" shape="rect">
-                <area target="" alt="Soft3" title="Soft3" href="" coords="639,927,705,965" shape="rect">
-                <area target="" alt="Soft4" title="Soft4" href="" coords="813,922,883,967" shape="rect">
-                <area target="" alt="Soft5" title="Soft5" href="" coords="992,921,1060,967" shape="rect">
-                <area target="" alt="Soft6" title="Soft6" href="" coords="1165,920,1233,962" shape="rect">
-                <area target="" alt="Back" title="Back" href="" coords="175,948,28" shape="circle">
-                <area target="" alt="Entry" title="Entry" href="" coords="1468,496,26" shape="circle">
-                <area target="" alt="Ch1" title="Ch1" href="" coords="1391,1032,26" shape="circle">
-                <area target="" alt="Ch2" title="Ch2" href="" coords="1612,1029,25" shape="circle">
-                <area target="" alt="Ch3" title="Ch3" href="" coords="1835,1027,28" shape="circle">
-                <area target="" alt="Ch4" title="Ch4" href="" coords="2062,1028,24" shape="circle">
-                <area target="" alt="Zoom" title="Zoom" href="" coords="1693,119,23" shape="circle">
-                <area target="" alt="Navi_L" title="Navi_L" href="" coords="1695,258,24" shape="circle">
-                <area target="" alt="NaviStop" title="NaviStop" href="" coords="1771,257,23" shape="circle">
-                <area target="" alt="Navi_R" title="Navi_R" href="" coords="1847,259,22" shape="circle">
-                <area target="" alt="ForceTrigger" title="ForceTrigger" href="" coords="1707,353,1643,317" shape="rect">
-                <area target="" alt="QuickAction" title="QuickAction" href="" coords="1645,469,1707,507" shape="rect">
-                <area target="" alt="Utility" title="Utility" href="" coords="1542,470,1606,504" shape="rect">
-                <area target="" alt="WavaGen" title="WavaGen" href="" coords="1542,543,1604,581" shape="rect">
-                <area target="" alt="Analyza" title="Analyza" href="" coords="1645,538,1707,580" shape="rect">
-                <area target="" alt="Digital" title="Digital" href="" coords="1970,393,2032,429" shape="rect">
-                <area target="" alt="Label" title="Label" href="" coords="1600,760,1665,798" shape="rect">
-                <area target="" alt="Posツマミ" title="Posツマミ" href="" coords="1777,164,26" shape="circle">
-                <area target="" alt="CursorA" title="CursorA" href="" coords="2114,357,27" shape="circle">
-                <area target="" alt="CursorB" title="CursorB" href="" coords="2114,504,27" shape="circle">
+                <area alt="電源ボタン" title="電源ボタン" coords="172,1030,250,1084" shape="rect">
+                <area alt="CH1_MENU" title="CH1_MENU" coords="1519,743,1561,809" shape="rect">
+                <area alt="CH2_MENU" title="CH2_MENU" coords="1708,741,1742,807" shape="rect">
+                <area alt="CH3_MENU" title="CH3_MENU" coords="1895,741,1931,805" shape="rect">
+                <area alt="CH4_MENU" title="CH4_MENU" coords="2081,740,2119,808" shape="rect">
+                <area alt="RunStop" title="RunStop" coords="1894,103,2007,154" shape="rect">
+                <area alt="Single" title="Single" coords="2037,102,2152,153" shape="rect">
+                <area alt="時間ツマミ" title="KNOB_TIME" coords="1494,167,41" shape="circle">
+                <area alt="AutoSet" title="AutoSet" coords="2066,205,2124,243" shape="rect">
+                <area alt="Default" title="Default" coords="1920,202,1978,238" shape="rect">
+                <area alt="Horiz" title="Horiz" coords="1567,100,1630,136" shape="rect">
+                <area alt="Search" title="Search" coords="1566,171,1630,209" shape="rect">
+                <area alt="Navigate" title="Navigate" coords="1566,240,1628,278" shape="rect">
+                <area alt="Volt1" title="Volt1" coords="1544,673,36" shape="circle">
+                <area alt="Volt2" title="Volt2" coords="1731,671,38" shape="circle">
+                <area alt="Volt3" title="Volt3" coords="1922,675,38" shape="circle">
+                <area alt="Volt4" title="Volt4" coords="2108,669,38" shape="circle">
+                <area alt="Pos1" title="Pos1" coords="1542,877,27" shape="circle">
+                <area alt="Pos2" title="Pos2" coords="1727,876,27" shape="circle">
+                <area alt="Pos3" title="Pos3" coords="1918,871,28" shape="circle">
+                <area alt="Pos4" title="Pos4" coords="2106,872,28" shape="circle">
+                <area alt="Trigger" title="Trigger" coords="1442,319,1506,355" shape="rect">
+                <area alt="Level" title="Level" coords="1576,376,29" shape="circle">
+                <area alt="Cursr" title="Cursr" coords="1747,318,1807,354" shape="rect">
+                <area alt="Meas" title="Meas" coords="1747,392,1807,428" shape="rect">
+                <area alt="Cursrツマミ" title="Cursrツマミ" coords="1883,376,29" shape="circle">
+                <area alt="Math" title="Math" coords="1972,465,2028,505" shape="rect">
+                <area alt="Serial" title="Serial" coords="1972,314,2032,352" shape="rect">
+                <area alt="Ref" title="Ref" coords="1970,540,2028,576" shape="rect">
+                <area alt="Display" title="Display" coords="1847,467,1910,503" shape="rect">
+                <area alt="Acquire" title="Acquire" coords="1747,463,1807,503" shape="rect">
+                <area alt="SavaRecall" title="SavaRecall" coords="1747,545,1807,577" shape="rect">
+                <area alt="Print" title="Print" coords="1845,545,1912,581" shape="rect">
+                <area alt="Help" title="Help" coords="1791,758,1849,794" shape="rect">
+                <area alt="Soft1" title="Soft1" coords="287,923,351,969" shape="rect">
+                <area alt="Soft2" title="Soft2" coords="462,928,528,966" shape="rect">
+                <area alt="Soft3" title="Soft3" coords="639,927,705,965" shape="rect">
+                <area alt="Soft4" title="Soft4" coords="813,922,883,967" shape="rect">
+                <area alt="Soft5" title="Soft5" coords="992,921,1060,967" shape="rect">
+                <area alt="Soft6" title="Soft6" coords="1165,920,1233,962" shape="rect">
+                <area alt="Back" title="Back" coords="175,948,28" shape="circle">
+                <area alt="Entry" title="Entry" coords="1468,496,26" shape="circle">
+                <area alt="Ch1" title="Ch1" coords="1391,1032,26" shape="circle">
+                <area alt="Ch2" title="Ch2" coords="1612,1029,25" shape="circle">
+                <area alt="Ch3" title="Ch3" coords="1835,1027,28" shape="circle">
+                <area alt="Ch4" title="Ch4" coords="2062,1028,24" shape="circle">
+                <area alt="Zoom" title="Zoom" coords="1693,119,23" shape="circle">
+                <area alt="Navi_L" title="Navi_L" coords="1695,258,24" shape="circle">
+                <area alt="NaviStop" title="NaviStop" coords="1771,257,23" shape="circle">
+                <area alt="Navi_R" title="Navi_R" coords="1847,259,22" shape="circle">
+                <area alt="ForceTrigger" title="ForceTrigger" coords="1707,353,1643,317" shape="rect">
+                <area alt="QuickAction" title="QuickAction" coords="1645,469,1707,507" shape="rect">
+                <area alt="Utility" title="Utility" coords="1542,470,1606,504" shape="rect">
+                <area alt="WavaGen" title="WavaGen" coords="1542,543,1604,581" shape="rect">
+                <area alt="Analyza" title="Analyza" coords="1645,538,1707,580" shape="rect">
+                <area alt="Digital" title="Digital" coords="1970,393,2032,429" shape="rect">
+                <area alt="Label" title="Label" coords="1600,760,1665,798" shape="rect">
+                <area alt="Posツマミ" title="Posツマミ" coords="1777,164,26" shape="circle">
+                <area alt="CursorA" title="CursorA" coords="2114,357,27" shape="circle">
+                <area alt="CursorB" title="CursorB" coords="2114,504,27" shape="circle">
             </map>
         </div>
     </div>
-<div id="ps-container" class="draggable-equipment" style="top: 20px; left: 600px; display: none;">
-    <div id="model-ps" class="instrument-container">  <img src="power-supply.png" alt="直流電源" usemap="#map-ps">
 
-    <div id="disp-ch1-v" class="ps-led-display"></div>
-    <div id="disp-ch1-a" class="ps-led-display"></div>
-    <div id="disp-ch2-v" class="ps-led-display"></div>
-    <div id="disp-ch2-a" class="ps-led-display"></div>
+    <!-- ====================================== -->
+    <!-- 直流電源 -->
+    <!-- ====================================== -->
+    <div id="ps-container" class="draggable-equipment" style="top: 20px; left: 600px; display: none;">
+        <div id="model-ps" class="instrument-container">
+            <img src="power-supply.png" alt="直流電源">
 
-        <map name="map-ps">
-            <area shape="circle" coords="107,582,32" href="#" alt="ps_power" />
-            <area shape="circle" coords="297,585,31" href="#" alt="ch2mai" />
-            <area shape="circle" coords="392,583,29" href="#" alt="ch2pura" />
-            <area shape="circle" coords="482,586,32" href="#" alt="grd" />
-            <area shape="circle" coords="577,583,30" href="#" alt="ch1mai" />
-            <area shape="circle" coords="669,585,29" href="#" alt="ch1pura" />
-            <area shape="circle" coords="839,586,25" href="#" alt="ch3mai" />
-            <area shape="circle" coords="930,586,28" href="#" alt="ch3pura" />
-            <area shape="circle" coords="931,152,37" href="#" alt="volt" />
-            <area shape="circle" coords="933,334,39" href="#" alt="curr" />
-            <area shape="rect" coords="689,114,743,144" href="#" alt="menu1" />
-            <area shape="rect" coords="693,172,743,200" href="#" alt="menu2" />
-            <area shape="rect" coords="694,228,739,259" href="#" alt="menu3" />
-            <area shape="rect" coords="694,284,743,314" href="#" alt="menu4" />
-            <area shape="rect" coords="779,115,825,142" href="#" alt="ch1btn" />
-            <area shape="rect" coords="778,173,823,199" href="#" alt="ch2btn" />
-            <area shape="rect" coords="776,339,827,372" href="#" alt="output" />
-    </map> </div>
+            <!-- 電圧・電流のLED表示 -->
+            <div id="disp-ch1-v" class="ps-led-display"></div>
+            <div id="disp-ch1-a" class="ps-led-display"></div>
+            <div id="disp-ch2-v" class="ps-led-display"></div>
+            <div id="disp-ch2-a" class="ps-led-display"></div>
 
-</div>
+            <!-- 状態表示バー（本体の下に付く。JSが現在の状態を書き込む） -->
+            <div class="status-strip">
+                <div class="status-item"><span class="status-label">POWER</span><span id="ps-st-power" class="status-value"></span></div>
+                <div class="status-item"><span class="status-label">OUTPUT</span><span id="ps-st-output" class="status-value"></span></div>
+                <div class="status-item"><span class="status-label">操作対象</span><span id="ps-st-channel" class="status-value"></span></div>
+                <div class="status-item"><span class="status-label">VOLTAGE ツマミ</span><span id="ps-st-fine" class="status-value"></span></div>
+            </div>
 
-<div id="fg-container" class="draggable-equipment" style="top: 20px; left: 1200px; display: none;">
-    <div id="model-fg" class="instrument-container" style="position: relative;">
-        <img src="Generator.jpeg" alt="発振器" usemap="#fg-map">
-
-        <div id="fg-display" class="fg-display-off">
-            <div id="fg-disp-wave">WAVE: SINE</div>
-            <div id="fg-disp-freq">FREQ: 1000 Hz</div>
-            <div id="fg-disp-amptd">AMP: 1.0 Vpp</div>
-            <div id="fg-disp-offset">OFS: 0.0 V</div>
-            <div id="fg-disp-input" style="color: red; margin-top: 5px;"></div>
-            <div id="fg-disp-out" style="margin-top: 5px; font-weight: bold;">OUTPUT: OFF</div>
+            <map name="map-ps">
+                <area shape="circle" coords="107,582,32" alt="ps_power">
+                <area shape="circle" coords="297,585,31" alt="ch2mai">
+                <area shape="circle" coords="392,583,29" alt="ch2pura">
+                <area shape="circle" coords="482,586,32" alt="grd">
+                <area shape="circle" coords="577,583,30" alt="ch1mai">
+                <area shape="circle" coords="669,585,29" alt="ch1pura">
+                <area shape="circle" coords="839,586,25" alt="ch3mai">
+                <area shape="circle" coords="930,586,28" alt="ch3pura">
+                <area shape="circle" coords="931,152,37" alt="volt">
+                <area shape="circle" coords="933,334,39" alt="curr">
+                <area shape="rect" coords="689,114,743,144" alt="menu1">
+                <area shape="rect" coords="693,172,743,200" alt="menu2">
+                <area shape="rect" coords="694,228,739,259" alt="menu3">
+                <area shape="rect" coords="694,284,743,314" alt="menu4">
+                <area shape="rect" coords="779,115,825,142" alt="ch1btn">
+                <area shape="rect" coords="778,173,823,199" alt="ch2btn">
+                <area shape="rect" coords="776,339,827,372" alt="output">
+            </map>
         </div>
+    </div>
 
+    <!-- ====================================== -->
+    <!-- 発振器 -->
+    <!-- ====================================== -->
+    <div id="fg-container" class="draggable-equipment" style="top: 20px; left: 1200px; display: none;">
+        <div id="model-fg" class="instrument-container">
+            <img src="Generator.jpeg" alt="発振器">
+
+            <div id="fg-display">
+                <div id="fg-disp-wave">WAVE: SINE</div>
+                <div id="fg-disp-freq">FREQ: 1000 Hz</div>
+                <div id="fg-disp-amptd">AMP: 1.0 Vpp</div>
+                <div id="fg-disp-offset">OFS: 0.0 V</div>
+                <div id="fg-disp-input" style="color: red; margin-top: 5px;"></div>
+                <div id="fg-disp-out" style="margin-top: 5px; font-weight: bold;">OUTPUT: OFF</div>
+            </div>
+
+            <!-- ボタン（テンキー・設定・出力）と出力端子（fctnout / subout） -->
         <map name="fg-map">
-            <area alt="seven" title="seven" href="javascript:void(0)" onclick="handleFgButton('seven')" coords="562,140,594,164" shape="rect">
-            <area alt="fore" title="fore" href="javascript:void(0)" onclick="handleFgButton('fore')" coords="561,189,594,209" shape="rect">
-            <area alt="one" title="one" href="javascript:void(0)" onclick="handleFgButton('one')" coords="560,233,595,256" shape="rect">
-            <area alt="zero" title="zero" href="javascript:void(0)" onclick="handleFgButton('zero')" coords="561,279,594,302" shape="rect">
-            <area alt="eight" title="eight" href="javascript:void(0)" onclick="handleFgButton('eight')" coords="612,142,646,163" shape="rect">
-            <area alt="five" title="five" href="javascript:void(0)" onclick="handleFgButton('five')" coords="613,188,645,210" shape="rect">
-            <area alt="two" title="two" href="javascript:void(0)" onclick="handleFgButton('two')" coords="612,234,646,256" shape="rect">
-            <area alt="dot" title="dot" href="javascript:void(0)" onclick="handleFgButton('dot')" coords="614,281,644,303" shape="rect">
-            <area alt="nine" title="nine" href="javascript:void(0)" onclick="handleFgButton('nine')" coords="666,141,696,163" shape="rect">
-            <area alt="six" title="six" href="javascript:void(0)" onclick="handleFgButton('six')" coords="665,189,696,209" shape="rect">
-            <area alt="three" title="three" href="javascript:void(0)" onclick="handleFgButton('three')" coords="664,234,697,256" shape="rect">
-            <area alt="puramai" title="puramai" href="javascript:void(0)" onclick="handleFgButton('puramai')" coords="665,280,696,304" shape="rect">
-            
-            <area alt="fctn" title="fctn" href="javascript:void(0)" onclick="handleFgButton('fctn')" coords="474,139,527,165" shape="rect">
-            <area alt="freq" title="freq" href="javascript:void(0)" onclick="handleFgButton('freq')" coords="480,187,527,212" shape="rect">
-            <area alt="amptd" title="amptd" href="javascript:void(0)" onclick="handleFgButton('amptd')" coords="482,232,530,259" shape="rect">
-            <area alt="offset" title="offset" href="javascript:void(0)" onclick="handleFgButton('offset')" coords="479,279,530,305" shape="rect">
-            <area alt="latorpowar" title="latorpowar" href="javascript:void(0)" onclick="handleFgButton('latorpowar')" coords="52,433,85,457" shape="rect">
-            <area alt="enter" title="enter" href="javascript:void(0)" onclick="handleFgButton('enter')" coords="786,143,852,189" shape="rect">
-            <area alt="cansel" title="cansel" href="javascript:void(0)" onclick="handleFgButton('cansel')" coords="722,143,767,189" shape="rect">
-            <area alt="out" title="out" href="javascript:void(0)" onclick="handleFgButton('out')" coords="651,344,686,370" shape="rect">
-            <area alt="undo" title="undo" href="javascript:void(0)" onclick="handleFgButton('undo')" coords="716,308,752,325" shape="rect">
+                <area alt="seven" title="seven" coords="562,140,594,164" shape="rect">
+                <area alt="fore" title="fore" coords="561,189,594,209" shape="rect">
+                <area alt="one" title="one" coords="560,233,595,256" shape="rect">
+                <area alt="zero" title="zero" coords="561,279,594,302" shape="rect">
+                <area alt="eight" title="eight" coords="612,142,646,163" shape="rect">
+                <area alt="five" title="five" coords="613,188,645,210" shape="rect">
+                <area alt="two" title="two" coords="612,234,646,256" shape="rect">
+                <area alt="dot" title="dot" coords="614,281,644,303" shape="rect">
+                <area alt="nine" title="nine" coords="666,141,696,163" shape="rect">
+                <area alt="six" title="six" coords="665,189,696,209" shape="rect">
+                <area alt="three" title="three" coords="664,234,697,256" shape="rect">
+                <area alt="puramai" title="puramai" coords="665,280,696,304" shape="rect">
 
-            <area alt="fctnout" title="fctnout" href="javascript:void(0)" coords="616,433,21" shape="circle">
-            <area alt="subout" title="subout" href="javascript:void(0)" coords="720,433,23" shape="circle">
-        </map>
+                <area alt="fctn" title="fctn" coords="474,139,527,165" shape="rect">
+                <area alt="freq" title="freq" coords="480,187,527,212" shape="rect">
+                <area alt="amptd" title="amptd" coords="482,232,530,259" shape="rect">
+                <area alt="offset" title="offset" coords="479,279,530,305" shape="rect">
+                <area alt="latorpowar" title="latorpowar" coords="52,433,85,457" shape="rect">
+                <area alt="enter" title="enter" coords="786,143,852,189" shape="rect">
+                <area alt="cansel" title="cansel" coords="722,143,767,189" shape="rect">
+                <area alt="out" title="out" coords="651,344,686,370" shape="rect">
+                <area alt="undo" title="undo" coords="716,308,752,325" shape="rect">
+
+                <area alt="fctnout" title="fctnout" coords="616,433,21" shape="circle">
+                <area alt="subout" title="subout" coords="720,433,23" shape="circle">
+            </map>
+        </div>
     </div>
-</div>
 
-<div id="adda-container" class="draggable-equipment" style="top: 20px; left: 1800px; display: none;">
-    <div id="model-adda" class="instrument-container" style="position: relative;">
-        <img src="ADDAConverter.png" alt="AD/DA変換機" usemap="#adda-map">
+    <!-- ====================================== -->
+    <!-- AD/DA変換機 (ITF-203B) -->
+    <!-- ====================================== -->
+    <div id="adda-container" class="draggable-equipment" style="top: 20px; left: 1800px; display: none;">
+        <div id="model-adda" class="instrument-container">
+            <img src="ADDAConverter.png" alt="AD/DA変換機">
 
-        <map name="adda-map">
-            <!-- 端子（配線接続用）: class="terminal-spot" -->
-            <area class="terminal-spot" alt="TB1" title="TB1" href="javascript:void(0)" coords="102,403,18" shape="circle">
-            <area class="terminal-spot" alt="TB2" title="TB2" href="javascript:void(0)" coords="102,462,18" shape="circle">
-            <area class="terminal-spot" alt="TP1" title="TP1" href="javascript:void(0)" coords="105,367,11" shape="circle">
-            <area class="terminal-spot" alt="TP2" title="TP2" href="javascript:void(0)" coords="105,498,12" shape="circle">
-            <area class="terminal-spot" alt="TP3" title="TP3" href="javascript:void(0)" coords="254,500,14" shape="circle">
-            <area class="terminal-spot" alt="TP5" title="TP5" href="javascript:void(0)" coords="442,194,16" shape="circle">
-            <area class="terminal-spot" alt="TP6" title="TP6" href="javascript:void(0)" coords="463,286,13" shape="circle">
-            <area class="terminal-spot" alt="TP8" title="TP8" href="javascript:void(0)" coords="552,380,12" shape="circle">
-            <area class="terminal-spot" alt="TP7" title="TP7" href="javascript:void(0)" coords="494,439,14" shape="circle">
-            <area class="terminal-spot" alt="TP9" title="TP9" href="javascript:void(0)" coords="603,438,15" shape="circle">
-            <area class="terminal-spot" alt="TP10" title="TP10" href="javascript:void(0)" coords="679,439,11" shape="circle">
-            <area class="terminal-spot" alt="TP11" title="TP11" href="javascript:void(0)" coords="759,477,13" shape="circle">
-            <area class="terminal-spot" alt="TP12" title="TP12" href="javascript:void(0)" coords="884,503,13" shape="circle">
-            <area class="terminal-spot" alt="TB5" title="TB5" href="javascript:void(0)" coords="1310,282,20" shape="circle">
-            <area class="terminal-spot" alt="TB6" title="TB6" href="javascript:void(0)" coords="1310,343,19" shape="circle">
-            <area class="terminal-spot" alt="TB3" title="TB3" href="javascript:void(0)" coords="478,680,17" shape="circle">
-            <area class="terminal-spot" alt="TB4" title="TB4" href="javascript:void(0)" coords="555,678,20" shape="circle">
+            <!-- サンプリング周期切換（見えないクリック領域。クリック / ホイールで切替） -->
+            <div id="adda-sampling-hotspot" title="サンプリング周期切換"></div>
 
-            <!-- スイッチ（ON/OFF切り替え用）: class="switch-spot" -->
-            <area class="switch-spot" alt="SW1" title="SW1" href="javascript:void(0)" onclick="handleAddaSwitch('SW1')" coords="194,419,225,487" shape="rect">
-            <area class="switch-spot" alt="SW4" title="SW4" href="javascript:void(0)" onclick="handleAddaSwitch('SW4')" coords="517,256,542,314" shape="rect">
-            <area class="switch-spot" alt="SW5" title="SW5" href="javascript:void(0)" onclick="handleAddaSwitch('SW5')" coords="785,84,863,109" shape="rect">
-            <area class="switch-spot" alt="SW6" title="SW6" href="javascript:void(0)" onclick="handleAddaSwitch('SW6')" coords="1310,120,1336,173" shape="rect">
-            <area class="switch-spot" alt="SW7" title="SW7" href="javascript:void(0)" onclick="handleAddaSwitch('SW7')" coords="1308,419,1340,488" shape="rect">
-            <area class="switch-spot" alt="SW8" title="SW8" href="javascript:void(0)" onclick="handleAddaSwitch('SW8')" coords="948,670,1024,690" shape="rect">
-        </map>
+            <!-- 状態表示バー（基板の下に付く。JSが現在の状態を書き込む） -->
+            <div class="status-strip">
+                <!-- AD変換結果のデジタルコード。左が最上位ビット(D7)。点灯 = 1 -->
+                <div class="status-item">
+                    <span class="status-label">デジタルコード（LED）</span>
+                    <div id="adda-leds" class="led-row">
+                        <span class="led">D7</span>
+                        <span class="led">D6</span>
+                        <span class="led">D5</span>
+                        <span class="led">D4</span>
+                        <span class="led">D3</span>
+                        <span class="led">D2</span>
+                        <span class="led">D1</span>
+                        <span class="led">D0</span>
+                    </div>
+                </div>
+                <div class="status-item"><span class="status-label">コード</span><span id="adda-st-code" class="status-value"></span></div>
+                <div class="status-item"><span class="status-label">入力 (TB1)</span><span id="adda-st-input" class="status-value"></span></div>
+                <div class="status-item"><span class="status-label">SW4 ビット数</span><span id="adda-st-bits" class="status-value"></span></div>
+                <div class="status-item"><span class="status-label">SW5・SW7</span><span id="adda-st-mode" class="status-value"></span></div>
+                <div class="status-item"><span class="status-label">サンプリング周期</span><span id="adda-st-sampling" class="status-value"></span></div>
+                <div class="status-item"><span class="status-label">SW6・SW8</span><span class="status-value">OFF</span></div>
+            </div>
+
+            <map name="adda-map">
+                <!-- 端子（配線接続用）: class="terminal-spot" -->
+                <area class="terminal-spot" alt="TB1" title="TB1" coords="102,403,18" shape="circle">
+                <area class="terminal-spot" alt="TB2" title="TB2" coords="102,462,18" shape="circle">
+                <area class="terminal-spot" alt="TP1" title="TP1" coords="105,367,11" shape="circle">
+                <area class="terminal-spot" alt="TP2" title="TP2" coords="105,498,12" shape="circle">
+                <area class="terminal-spot" alt="TP3" title="TP3" coords="254,500,14" shape="circle">
+                <area class="terminal-spot" alt="TP5" title="TP5" coords="442,194,16" shape="circle">
+                <area class="terminal-spot" alt="TP6" title="TP6" coords="463,286,13" shape="circle">
+                <area class="terminal-spot" alt="TP8" title="TP8" coords="552,380,12" shape="circle">
+                <area class="terminal-spot" alt="TP7" title="TP7" coords="494,439,14" shape="circle">
+                <area class="terminal-spot" alt="TP9" title="TP9" coords="603,438,15" shape="circle">
+                <area class="terminal-spot" alt="TP10" title="TP10" coords="679,439,11" shape="circle">
+                <area class="terminal-spot" alt="TP11" title="TP11" coords="759,477,13" shape="circle">
+                <area class="terminal-spot" alt="TP12" title="TP12" coords="884,503,13" shape="circle">
+                <area class="terminal-spot" alt="TB5" title="TB5" coords="1310,282,20" shape="circle">
+                <area class="terminal-spot" alt="TB6" title="TB6" coords="1310,343,19" shape="circle">
+                <area class="terminal-spot" alt="TB3" title="TB3" coords="478,680,17" shape="circle">
+                <area class="terminal-spot" alt="TB4" title="TB4" coords="555,678,20" shape="circle">
+
+                <!-- スイッチ（ON/OFF切り替え用）: class="switch-spot" -->
+                <area class="switch-spot" alt="SW1" title="SW1" coords="194,419,225,487" shape="rect">
+                <area class="switch-spot" alt="SW4" title="SW4" coords="517,256,542,314" shape="rect">
+                <area class="switch-spot" alt="SW5" title="SW5" coords="785,84,863,109" shape="rect">
+                <area class="switch-spot" alt="SW6" title="SW6" coords="1310,120,1336,173" shape="rect">
+                <area class="switch-spot" alt="SW7" title="SW7" coords="1308,419,1340,488" shape="rect">
+                <area class="switch-spot" alt="SW8" title="SW8" coords="948,670,1024,690" shape="rect">
+            </map>
+        </div>
     </div>
-</div>
-    <!-- ========================================== -->
-    <!-- 説明書画面 -->
-    <!-- ========================================== -->
-    <div id="manual-screen" class="manual-container" style="display: none;">
+
+    <!-- ====================================== -->
+    <!-- 説明書（INFO の「説明書」で表示） -->
+    <!-- ====================================== -->
+    <div id="manual-screen" class="manual-container">
         <div class="manual-paper">
             <h2>§2-II-7 AD変換 / DA変換 シミュレータ 操作説明書</h2>
 
@@ -356,7 +415,7 @@
                 <p>画面右端の <span class="highlight">◀ 実験器具</span> タブをクリックするとサイドバーが開き、各器具のON/OFFを切り替えられます。</p>
                 <ul>
                     <li><strong>📺 オシロスコープ</strong>：波形を観察します（Agilent MSOX2004A）</li>
-                    <li><strong>🔋 直流電源</strong>：AD/DA変換機のアナログ入力にDC電圧を供給します（手順1・2で使用）</li>
+                    <li><strong>🔋 直流電源</strong>：AD/DA変換機のアナログ入力にDC電圧を供給します（手順1・2で使用）。電圧ツマミはホイールで回し、クリックすると 粗調整（0.1V刻み）⇔ FINE（0.01V刻み）が切り替わります。現在の状態は本体の下に表示されます</li>
                     <li><strong>🔊 発振器</strong>：AD/DA変換機にサイン波などを入力します（手順3・4で使用）</li>
                     <li><strong>AD/DA変換機</strong>：器具リストをクリックまたは最初から表示されています（ITF-203B）</li>
                 </ul>
@@ -377,7 +436,7 @@
                     <li>発振器 OUTPUT → AD/DA <strong>TB1</strong></li>
                     <li>AD/DA <strong>TB5</strong>（DA出力）→ オシロ Ch1</li>
                     <li>AD/DA <strong>TP1</strong>（原波形）→ オシロ Ch2</li>
-                    <li>AD/DA <strong>TP3</strong>（S/H信号）→ オシロ Ch1、<strong>TP8</strong>（比較器出力）→ Ch2、<strong>TP5</strong> → Ch3</li>
+                    <li>AD/DA <strong>TP3</strong>（S/H信号）→ オシロ Ch1、<strong>TP8</strong>（比較器出力）→ Ch2、<strong>TP5</strong>（逐次比較のDA出力）→ Ch3</li>
                 </ul>
             </div>
 
@@ -388,8 +447,8 @@
                     <li><strong>電圧軸（Volt1〜Volt4）：</strong>各チャンネルのツマミの上でホイールを回すと Volt/Div が変わります</li>
                     <li><strong>RunStop：</strong>波形の更新を停止（STOP）／再開（RUN）します</li>
                     <li><strong>AutoSet：</strong>現在の信号に合わせて時間軸・電圧軸を自動調整します</li>
-                    <li><strong>カーソル（Cursr）：</strong>クリックするたびにカーソルA → カーソルB → OFF と切り替わります。CursorA / CursorB ツマミでホイール操作すると位置を動かせます。時間差ΔTと電圧差ΔVが画面に表示されます</li>
-                    <li><strong>トリガーレベル（Level）：</strong>ツマミの上でホイールを回すとトリガーレベルが変わります（画面右上 T: xx.xxV）</li>
+                    <li><strong>カーソル（Cursr）：</strong>クリックするたびに、操作するカーソルが A → B（時間・縦線）→ Y1 → Y2（電圧・横線）→ OFF と切り替わります。Cursrツマミのホイール操作、または画面を直接クリックして位置を動かせます。画面左上に、時間差 Δt と 1/Δt、Y1・Y2 の電圧とその差 ΔY が表示されます。電圧は選択中のチャンネル（CH1〜CH3 のボタンで選択）の目盛りで読みます</li>
+                    <li><strong>トリガーレベル（Level）：</strong>ツマミの上でホイールを回すとトリガーレベルが変わります（画面右上 T: xx.xxV）。CH1 の波形がこのレベルを下から上へ横切ると波形が静止します（TP3 などのパルス波形にもかかります）</li>
                 </ul>
             </div>
 
@@ -402,7 +461,8 @@
                     <li><strong>SW6 / SW8：</strong>OFFのまま使用します</li>
                     <li><strong>サンプリング周期切換（SAMPLING BS/00 横）：</strong>クリックで 5µs → 10µs → 50µs → 100µs → 200µs → 500µs → 5µs … と順に切替</li>
                 </ul>
-                <p>現在の設定（サンプリング周期・量子化ビット数・入力モード）はオシロスコープ画面の左上に常に表示されます。</p>
+                <p>基板の下の状態表示バーに、AD変換結果のデジタルコード（LED 8個。左が最上位ビット、点灯が1）と、現在の設定（入力・量子化ビット数・動作モード・サンプリング周期）が常に表示されます。4bit のときは左側の4個だけを使います。</p>
+                <p>直流電源を入力したときに観測できる信号：<strong>TP3</strong> サンプル/ホールド制御信号、<strong>TP8</strong> 比較器出力（変換結果のビット列）、<strong>TP5</strong> 逐次比較のDA出力（入力と比べる電圧が1ビットごとに変わる階段波）。</p>
             </div>
 
             <div class="manual-section">
@@ -415,45 +475,60 @@
                 <ul>
                     <li>✅ オシロスコープ波形表示（CH1 / CH2 / CH3）</li>
                     <li>✅ 時間軸・電圧軸ツマミ（ホイール操作）</li>
-                    <li>✅ RunStop / AutoSet / カーソル（縦線A・B、ΔT・ΔV表示）</li>
+                    <li>✅ RunStop / AutoSet / カーソル（時間 A・B と電圧 Y1・Y2、Δt・ΔY 表示）</li>
                     <li>✅ 発振器（周波数・振幅・波形種類・オフセット設定）</li>
-                    <li>✅ 直流電源（電圧設定・OUTPUT ON/OFF）</li>
+                    <li>✅ 直流電源（電圧設定・FINE モード・OUTPUT ON/OFF）</li>
                     <li>✅ AD/DA変換機との結線（TB1/TB2/TB5/TP1/TP3/TP5/TP8）</li>
                     <li>✅ 量子化ビット数切替（4bit / 8bit）</li>
                     <li>✅ サンプリング周期切替（5µs〜500µs）</li>
                     <li>✅ DA出力波形の階段状再現・エイリアス警告表示</li>
-                    <li>✅ 逐次比較型AD変換器のビット列波形（TP3/TP5/TP8）</li>
+                    <li>✅ 逐次比較型AD変換器の内部波形（TP3: S/H信号、TP8: 比較器出力、TP5: DA出力の階段波）</li>
+                    <li>✅ デジタルコードのLED表示とスイッチ設定の表示（AD/DA変換機の下）</li>
                 </ul>
             </div>
 
             <div style="text-align:center; margin-top:30px;">
-                <button class="panel-btn active" onclick="switchModelUI('agilent')">閉じてシミュレータに戻る</button>
+                <button class="panel-btn active" onclick="closeManual()">閉じてシミュレータに戻る</button>
             </div>
         </div>
     </div>
 
 </div> <!-- /.main-stage -->
 
-<!-- ツールチップ用 -->
-<div id="tooltip-hantek" class="tooltip"></div>
-<div id="tooltip-agilent" class="tooltip"></div>
 
+<!-- ========================================== -->
+<!-- 画面全体に重ねる部品 -->
+<!-- ========================================== -->
+
+<!-- ボタンの説明（マウスを乗せると表示） -->
+<div id="tooltip" class="tooltip"></div>
+
+<!-- 結線のワイヤーを描くSVGと、操作メッセージの表示欄 -->
+<svg id="wire-overlay"></svg>
+<div id="wire-status-bar"></div>
+
+<!-- ========================================== -->
+<!-- サイドバー -->
+<!-- ========================================== -->
+
+<!-- 右: 実験器具の表示 / 非表示 -->
 <div id="equipment-sidebar" class="equipment-sidebar">
     <div class="sidebar-tab" onclick="toggleSidebar()">
         ◀ 実験器具
     </div>
-    
+
     <div class="sidebar-content">
         <h3 style="margin-top: 0; padding-bottom: 10px; border-bottom: 1px solid #ccc;">器具リスト</h3>
-            <ul class="equipment-list">
-                <li onclick="toggleEquipment('osc')">📺 オシロスコープ</li>
-                <li onclick="toggleEquipment('ps')">🔋 直流電源</li>
-                <li onclick="toggleEquipment('fg')">🔊 発振器</li>
-            </ul>
+        <ul class="equipment-list">
+            <li onclick="toggleEquipment('osc')">📺 オシロスコープ</li>
+            <li onclick="toggleEquipment('ps')">🔋 直流電源</li>
+            <li onclick="toggleEquipment('fg')">🔊 発振器</li>
+            <li onclick="toggleEquipment('adda')">AD/DA変換機</li>
+        </ul>
     </div>
 </div>
 
-<!-- 実験番号サイドバー（左側） -->
+<!-- 左: 実験手順 -->
 <div id="experiment-sidebar" class="experiment-sidebar">
     <div class="sidebar-tab experiment-tab" onclick="toggleExperimentSidebar()">
         実験 ▶
@@ -462,27 +537,29 @@
         <h3 style="margin-top: 0; padding-bottom: 10px; border-bottom: 1px solid #ccc;">実験番号</h3>
         <ul class="equipment-list">
             <li onclick="showExperiment('exp1')">
-                <span style="font-size:11px;color:#888;">手順1</span><br>
-                AD変換過程の観察
+                <span style="font-size:11px;color:#888;">実験1</span><br>
+                AD/DA変換
             </li>
             <li onclick="showExperiment('exp2')">
-                <span style="font-size:11px;color:#888;">手順2</span><br>
-                入出力電圧特性の測定
+                <span style="font-size:11px;color:#888;">実験2</span><br>
+                インターフェース
             </li>
             <li onclick="showExperiment('exp3')">
-                <span style="font-size:11px;color:#888;">手順3</span><br>
-                AD/DA変換後の波形観察
+                <span style="font-size:11px;color:#888;">実験3</span><br>
+                センサ
             </li>
             <li onclick="showExperiment('exp4')">
-                <span style="font-size:11px;color:#888;">手順4</span><br>
-                入出力周波数特性の測定
+                <span style="font-size:11px;color:#888;">実験4</span><br>
+                汎用IC
             </li>
         </ul>
     </div>
 </div>
 
-<!-- 実験手順モーダル -->
-<div id="experiment-modal" style="display:none; pointer-events:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:2000; overflow:auto;">
+<!-- ========================================== -->
+<!-- 実験手順モーダル（左サイドバーの項目をクリックで表示） -->
+<!-- ========================================== -->
+<div id="experiment-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:2000; overflow:auto;">
     <div style="background:#fff; max-width:680px; margin:40px auto; border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.4); font-family:'Hiragino Sans',Meiryo,sans-serif;">
         <div style="background:#2c3e50; color:#fff; padding:16px 20px; border-radius:8px 8px 0 0; display:flex; justify-content:space-between; align-items:center;">
             <span id="exp-modal-title" style="font-size:16px; font-weight:bold;"></span>
@@ -491,7 +568,6 @@
         <div id="exp-modal-body" style="padding:24px 28px; line-height:1.8; color:#333; font-size:14px;"></div>
     </div>
 </div>
-
 
 
 <script src="script.js"></script>
