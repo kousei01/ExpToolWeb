@@ -189,6 +189,18 @@ body {
     color: #e74c3c;
 }
 
+/* 不正解のとき、操作問題でまだできていない項目の一覧（「・」区切りで横に並べる） */
+.test-unmet {
+    display: block;
+    margin: 6px 0;
+    font-size: 14px;
+    font-weight: normal;
+}
+
+.test-unmet span + span::before {
+    content: ' ・ ';
+}
+
 
 /* =======================================================================
    4. メインステージと機器

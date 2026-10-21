@@ -604,7 +604,9 @@ function showManual() {
 function closeManual() {
     document.body.classList.remove('manual-open');
     updateViewButtons();
-    redrawWires();   // 開いている間にウィンドウの大きさなどが変わっていても、線を端子に合わせ直す
+    // 開いている間にウィンドウの大きさ（ブラウザのズーム）が変わっていても、機器と線を合わせ直す
+    keepAllEquipmentInView();
+    redrawWires();
 }
 
 // コントロールパネルの「説明書」「Hantek」「Agilent」ボタンの選択表示を、現在の画面に合わせる
@@ -708,10 +710,34 @@ function toggleEquipment(eqId) {
     if (container.style.display === 'none') {
         container.style.display = 'block';
         bringToFront(container);
-        setZoom(currentZoom);   // 表示したばかりの機器にも現在のズームを適用する
+        setZoom(currentZoom);           // 表示したばかりの機器にも現在のズームを適用する
+        keepEquipmentInView(container);  // 画面の右外にあれば、見える位置へ動かす
+        redrawWires();
     } else {
         container.style.display = 'none';
     }
+}
+
+// 機器（.draggable-equipment）が、メインステージの右端からはみ出さないように動かす。
+// 機器の初期位置は index.html に px の固定値で書いてあるため、ブラウザのズームを上げる
+// （＝表示できる幅が狭くなる）と右側の画面外に出てしまい、表示しても見えないことがある。
+//   横: ステージの幅に収まるよう左へ寄せる（機器の方が広いときは左端に合わせる）
+//   縦: 上にはみ出していれば戻すだけ（下は、ふつうにスクロールすれば見えるので動かさない）
+function keepEquipmentInView(equipment) {
+    // 非表示の機器（説明書を開いている間も含む）は、大きさが測れないので動かさない
+    if (getComputedStyle(equipment).display === 'none') return;
+
+    const stage = document.querySelector('.main-stage');
+    const maxLeft = Math.max(0, stage.clientWidth - equipment.offsetWidth);
+    const left = Math.max(0, Math.min(equipment.offsetLeft, maxLeft));
+    const top  = Math.max(0, equipment.offsetTop);
+    if (left !== equipment.offsetLeft) equipment.style.left = left + 'px';
+    if (top  !== equipment.offsetTop)  equipment.style.top  = top + 'px';
+}
+
+// 表示中のすべての機器を、ステージの幅に収める
+function keepAllEquipmentInView() {
+    document.querySelectorAll('.draggable-equipment').forEach(keepEquipmentInView);
 }
 
 // 機器を最前面に出す
@@ -788,32 +814,6 @@ function switchInputSource(source) {
     // ボタンの選択表示（'fg' のときはどちらも選択しない）
     document.getElementById('btn-src-internal').classList.toggle('active', source === 'internal');
     document.getElementById('btn-src-ps').classList.toggle('active', source === 'power_supply');
-}
-
-// --- 内部テスト信号の操作パネル（SIGNAL GEN） ---
-// ※ 現在の index.html にはこのパネルのボタン（id="btn-wave-sine" など）が無いため、
-//    下の3つの関数は画面から呼ばれていない。実技テスト第3問がこのパネルを前提にしている。
-
-// 選択中のチャンネルの波形の種類を変える ('sine' | 'square' | 'tri')
-function setWaveType(type) {
-    scopeState.signals[scopeState.activeChannel].type = type;
-    updateControlPanelUI();
-    if (scopeState.isOn) drawWaveform();
-}
-
-// 選択中のチャンネルの振幅を変える（0.5V〜10V）
-function changeSignalAmplitude(amount) {
-    const signal = scopeState.signals[scopeState.activeChannel];
-    signal.amplitude = Math.max(0.5, Math.min(10.0, signal.amplitude + amount));
-    if (scopeState.isOn) drawWaveform();
-}
-
-// 波形ボタンの選択表示を、選択中のチャンネルの信号に合わせる
-function updateControlPanelUI() {
-    const currentType = scopeState.signals[scopeState.activeChannel].type;
-    document.querySelectorAll('[id^="btn-wave-"]').forEach(btn => btn.classList.remove('active'));
-    const activeBtn = document.getElementById('btn-wave-' + currentType);
-    if (activeBtn) activeBtn.classList.add('active');
 }
 
 
@@ -949,7 +949,9 @@ function calculateTriggerOffset() {
                 else before = mid;
             }
             scopeState.trigger.isTriggered = true;
-            return after;
+            // ほんの少し（1周期の1000万分の1）後ろにずらす。階段状の信号では、画面の点がちょうど段の境目に
+            // 重なることがあり、小数の誤差でどちらの段になるかがフレームごとに変わって境目がちらつくため
+            return after + period * 1e-7;
         }
     }
 
@@ -1692,7 +1694,8 @@ function getAdDaCode(voltage) {
         const half = adDaState.FSR / 2;
         normalized = Math.max(-half, Math.min(half - q, voltage)) + half;
     }
-    return Math.max(0, Math.min(levels - 1, Math.floor(normalized / q)));
+    // 1e-9 は小数の計算誤差の補正（例: 5.16 / 0.04 が 128.99999… になり、129 になるべきコードが 128 になるのを防ぐ）
+    return Math.max(0, Math.min(levels - 1, Math.floor(normalized / q + 1e-9)));
 }
 
 // コード → DA変換後の電圧
@@ -2299,7 +2302,6 @@ function handleOscButton(title, hotspot) {
             scopeState.isRunning = true;
             scopeState.activeChannel = 'CH1';
             scopeState.currentMenu = 'CH1_MENU';
-            updateControlPanelUI();
         } else {
             scopeState.currentMenu = null;
         }
@@ -2321,7 +2323,6 @@ function handleOscButton(title, hotspot) {
             scopeState.activeChannel = ch;
             scopeState.currentMenu = ch + '_MENU';
         }
-        updateControlPanelUI();
         return;
     }
 
@@ -2477,85 +2478,192 @@ function onHotspotMouseOut() {
 //  13. 実技テストモード
 // =======================================================================
 
+// 問題は実験テキスト（§2-II-7）の手順1〜4に沿っている。数値は出題のたびにランダムに決まる。
+// 操作の学習が目的なので、すべて「指示どおりに機器を操作・配線できたか」を判定する問題にしている。
+//   makeParams() … その回の数値を決める（結果は p として text・conditions に渡る）
+//   conditions(p) … 判定条件を [説明, 満たしているか] の並びで返す。すべて満たせば正解
+
 const testState = {
     active: false,
     currentQuestionIndex: 0,
+    params: null,             // 表示中の問題の数値
 };
 
+// --- 問題作成・判定用の小さな関数 ---
+
+// min〜max の整数をランダムに1つ
+function randomInt(min, max) {
+    return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+// 配列からランダムに1つ
+function randomPick(list) {
+    return list[Math.floor(Math.random() * list.length)];
+}
+
+// 指定した組み合わせの結線があるか（例: { psTerminal: 'ch1pura', addaTerminal: 'TB1' }）
+function hasConnection(spec) {
+    return wiringState.connections.some(c => Object.keys(spec).every(key => c[key] === spec[key]));
+}
+
+// 数値が許容差 tolerance 以内で一致しているか
+function isNear(value, target, tolerance) {
+    return Math.abs(value - target) <= tolerance;
+}
+
+// 時間軸・電圧レンジの表示用の文字列（例: 0.000005 → "5µs"、0.5 → "500mV"）
+function formatTimeDiv(sec) {
+    if (sec >= 1) return sec + 's';
+    if (sec >= 0.001) return Math.round(sec * 1000 * 100) / 100 + 'ms';
+    return Math.round(sec * 1000000 * 100) / 100 + 'µs';
+}
+function formatVoltDiv(volt) {
+    return volt >= 1 ? volt + 'V' : Math.round(volt * 1000) + 'mV';
+}
+
+// 手順1の配線（直流電源 → AD/DA、AD/DA → オシロ）の判定条件
+const PROC1_WIRING_CONDITIONS = () => [
+    ['直流電源 CH1(＋) → TB1 の結線', hasConnection({ psTerminal: 'ch1pura', addaTerminal: 'TB1' })],
+    ['直流電源 CH1(−) → TB2 の結線',  hasConnection({ psTerminal: 'ch1mai', addaTerminal: 'TB2' })],
+    ['TP3 → オシロ Ch1 の結線',       hasConnection({ addaTerminal: 'TP3', oscTerminal: 'Ch1' })],
+    ['TP8 → オシロ Ch2 の結線',       hasConnection({ addaTerminal: 'TP8', oscTerminal: 'Ch2' })],
+    ['TP5 → オシロ Ch3 の結線',       hasConnection({ addaTerminal: 'TP5', oscTerminal: 'Ch3' })],
+];
+
+// 手順3・4の配線（発振器 → AD/DA、AD/DA → オシロ）の判定条件
+const PROC3_WIRING_CONDITIONS = () => [
+    ['発振器 → TB1 の結線',     hasConnection({ type: 'fg-adda', addaTerminal: 'TB1' })],
+    ['TB5 → オシロ Ch1 の結線', hasConnection({ addaTerminal: 'TB5', oscTerminal: 'Ch1' })],
+    ['TP1 → オシロ Ch2 の結線', hasConnection({ addaTerminal: 'TP1', oscTerminal: 'Ch2' })],
+];
+
 // 問題の定義
-// setup: 問題開始時にオシロの設定をわざと狂わせる関数
-// check: ユーザーの設定が正しいか判定する関数 (trueなら正解)
 const quizData = [
+    // ---------------------------------------------------------------
+    // 第1問（手順1）: AD変換の過程を観察するための配線と設定
+    // ---------------------------------------------------------------
     {
-        id: 1,
-        text: "【第1問】CH1の波形が画面からはみ出しています。<br>電圧レンジ(Volts/Div)を調整して、波形全体が見えるように「2.00V」に設定してください。",
-        setup: function() {
-            // 初期設定: わざと拡大しすぎてはみ出させる
-            scopeState.isOn = true;
-            scopeState.activeChannel = 'CH1';
-            scopeState.voltIndexCH1 = 3; // 0.1V (はみ出す設定)
-            scopeState.signals['CH1'].type = 'sine';
-            scopeState.signals['CH1'].amplitude = 3.0; // 振幅3V
-            drawWaveform();
-        },
-        check: function() {
-            // 正解条件: CH1の電圧インデックスが 2.0V (Index=7) になっていること
-            // VOLT_STEPS = [0.01, ..., 1.0(6), 2.0(7), ...]
-            return VOLT_STEPS[scopeState.voltIndexCH1] === 2.0;
-        },
-        hint: "ヒント: 画像上の「電圧ツマミ」の上でマウスホイールを手前に回すと、レンジが広がります。"
+        makeParams: () => ({ V: randomInt(100, 900) / 100 }),   // 1.00〜9.00V（0.01V刻み）
+        text: p => `【第1問 AD変換の観察：配線と設定】<br>
+            直流電源 CH1 を <b>${p.V.toFixed(2)} V</b> に設定して出力し、AD/DA変換機の入力（TB1：＋、TB2：−）に接続してください。<br>
+            さらに TP3 をオシロ Ch1、TP8 を Ch2、TP5 を Ch3 に接続し、AD/DA変換機を
+            <b>ユニポーラ・8bit・サンプリング周期 5µs</b> に設定してください。`,
+        hint: () => 'ヒント: − 側は GND 端子ではなく CH1 の − 端子を使います。電圧ツマミはクリックすると FINE（0.01V刻み）に切り替わります。Ch3 は Agilent にしかありません。',
+        conditions: p => [
+            ['直流電源の電源と OUTPUT が ON',             psState.isOn && psState.isOutputOn],
+            [`直流電源 CH1 の電圧が ${p.V.toFixed(2)} V`,  isNear(psState.ch1.voltage, p.V, 0.005)],
+            ...PROC1_WIRING_CONDITIONS(),
+            ['ユニポーラ（SW5・SW7）',                     adDaState.mode === 'unipolar'],
+            ['8bit（SW4）',                                adDaState.resolution === 8],
+            ['サンプリング周期 5µs',                       adDaState.samplingPeriodUs === 5],
+        ],
     },
+
+    // ---------------------------------------------------------------
+    // 第2問（手順1）: 変換過程を観察するためのオシロスコープの設定
+    // ---------------------------------------------------------------
     {
-        id: 2,
-        text: "【第2問】波形の周期が細かすぎて見づらい状態です。<br>時間軸(Time/Div)を調整して、ゆったり見えるように「5.00ms」に設定してください。",
-        setup: function() {
-            // 初期設定: 時間軸を細かくしすぎる
-            scopeState.timeIndex = 6;
-            drawWaveform();
-        },
-        check: function() {
-            // 正解条件: 時間軸が 5ms (0.005s)
-            // TIME_STEPS配列の中から 0.005 を探すか、値を直接比較
-            const currentT = TIME_STEPS[scopeState.timeIndex];
-            // 浮動小数点計算の誤差を考慮して差分で比較するのが安全
-            return Math.abs(currentT - 0.005) < 0.0001;
-        },
-        hint: "ヒント: 右上の「時間ツマミ」を操作してください。"
+        makeParams: () => ({
+            timeIndex: randomPick([0, 1, 2, 3]),            // 1µs / 2µs / 5µs / 10µs
+            voltIndex: randomPick([6, 7, 8]),               // 1V / 2V / 5V
+            level:     randomPick([1.0, 1.5, 2.0, 2.5, 3.0]),
+        }),
+        text: p => `【第2問 AD変換の観察：オシロスコープの設定】<br>
+            第1問の配線のまま、オシロスコープを次のように設定してください。<br>
+            ・時間軸を <b>${formatTimeDiv(TIME_STEPS[p.timeIndex])}/div</b><br>
+            ・CH2・CH3 の電圧レンジを <b>${formatVoltDiv(VOLT_STEPS[p.voltIndex])}/div</b><br>
+            ・トリガレベルを <b>${p.level.toFixed(2)} V</b> にして、TP3 の波形を静止させる（画面右上が Trig'd）<br>
+            ・カーソルを <b>電圧カーソル（Y1 または Y2）</b> の操作状態にし、<b>CH3</b> を選択する`,
+        hint: () => 'ヒント: 時間軸は時間ツマミ、電圧レンジは Volt2・Volt3 ツマミ、トリガレベルは Level ツマミで変えます（どれもホイール操作）。Cursr ボタンを押すたびに A → B → Y1 → Y2 と切り替わり、CH3 は CH3 のボタンで選択します。',
+        conditions: p => [
+            ...PROC1_WIRING_CONDITIONS(),
+            ['オシロの電源が ON',                                          scopeState.isOn],
+            [`時間軸が ${formatTimeDiv(TIME_STEPS[p.timeIndex])}/div`,    scopeState.timeIndex === p.timeIndex],
+            [`CH2 の電圧レンジが ${formatVoltDiv(VOLT_STEPS[p.voltIndex])}/div`, scopeState.voltIndexCH2 === p.voltIndex],
+            [`CH3 の電圧レンジが ${formatVoltDiv(VOLT_STEPS[p.voltIndex])}/div`, scopeState.voltIndexCH3 === p.voltIndex],
+            [`トリガレベルが ${p.level.toFixed(2)} V`,                    isNear(scopeState.trigger.level, p.level, 0.01)],
+            ['トリガがかかっている（Trig\'d）',                           scopeState.trigger.isTriggered],
+            ['電圧カーソル（Y1 または Y2）を操作する状態',                scopeState.cursor.show && ['Y1', 'Y2'].includes(scopeState.cursor.target)],
+            ['CH3 を選択',                                                 scopeState.activeChannel === 'CH3'],
+        ],
     },
+
+    // ---------------------------------------------------------------
+    // 第3問（手順2）: 入出力電圧特性を測るための設定（FINE モードでの電圧設定）
+    // ---------------------------------------------------------------
     {
-        id: 3,
-        text: "【第3問: 信号の切り替え】<br>現在、画面には丸みを帯びた「正弦波(Sine)」が表示されています。<br>左側のコントロールパネルにあるボタンを操作して、入力信号を角張った「矩形波(Square)」に切り替えてください。",
-        setup: function() {
-            // 初期設定: 見やすいように調整しつつ、必ずSine波にする
-            scopeState.isOn = true;
-            scopeState.activeChannel = 'CH1';
-
-            scopeState.signals['CH1'].type = 'sine';
-            scopeState.signals['CH1'].amplitude = 2.0;
-
-            scopeState.voltIndexCH1 = 6; // 1.0V/div (見やすい大きさ)
-            scopeState.timeIndex = 15;   // 0.1s (見やすい周期)
-
-            updateControlPanelUI(); // パネルのボタン表示を同期
-            drawWaveform();
+        makeParams: () => {
+            const bits = randomPick([4, 8]);
+            // 8bit はテキストと同じく 5.12V ± 5%、4bit は全範囲から選ぶ
+            const cents = (bits === 8) ? randomInt(486, 538) : randomInt(50, 950);
+            return { bits, V: cents / 100 };
         },
-        check: function() {
-            // 正解条件: CH1の信号タイプが 'square' になっているか
-            return scopeState.signals['CH1'].type === 'square';
-        },
-        hint: "ヒント: 画面左側（CONTROL PANEL）の下の方にある「SIGNAL GEN」エリアを見てください。「Square」というボタンがあります。"
+        text: p => `【第3問 入出力電圧特性：測定の準備】<br>
+            AD/DA変換機を <b>${p.bits}bit・ユニポーラ</b> に設定してください。<br>
+            直流電源の電圧ツマミを <b>FINE（0.01V刻み）</b> に切り替え、CH1 の電圧を <b>${p.V.toFixed(2)} V</b> に合わせて出力してください。`,
+        hint: () => 'ヒント: ビット数は SW4、ユニポーラ/バイポーラは SW5 で切り替えます。直流電源の電圧ツマミはクリックで FINE になり、本体の下の表示で確認できます。',
+        conditions: p => [
+            ['直流電源 CH1(＋) → TB1・CH1(−) → TB2 の結線', hasConnection({ psTerminal: 'ch1pura', addaTerminal: 'TB1' }) && hasConnection({ psTerminal: 'ch1mai', addaTerminal: 'TB2' })],
+            [`${p.bits}bit（SW4）`,                          adDaState.resolution === p.bits],
+            ['ユニポーラ（SW5・SW7）',                       adDaState.mode === 'unipolar'],
+            ['電圧ツマミが FINE（0.01V刻み）',               psState.fineMode],
+            [`直流電源 CH1 の電圧が ${p.V.toFixed(2)} V`,    isNear(psState.ch1.voltage, p.V, 0.005)],
+            ['直流電源の OUTPUT が ON',                      psState.isOn && psState.isOutputOn],
+        ],
     },
+
+    // ---------------------------------------------------------------
+    // 第4問（手順3）: AD/DA変換後の波形を観察するための配線と設定
+    // ---------------------------------------------------------------
     {
-        id: 4,
-        text: "【最終問題】波形の動きを止めて(STOP状態にして)ください。",
-        setup: function() {
-            scopeState.isRunning = true;
-        },
-        check: function() {
-            return scopeState.isRunning === false;
-        },
-        hint: "ヒント: 右上の「Run/Stop」ボタンを押します。"
-    }
+        makeParams: () => ({
+            f:    randomPick([1000, 2000, 4000]),   // 周波数 [Hz]
+            A:    randomPick([2, 3, 4]),            // 振幅 [Vpp]
+            bits: randomPick([4, 8]),
+            Ts:   randomPick([10, 50, 100]),        // サンプリング周期 [µs]
+        }),
+        text: p => `【第4問 AD/DA変換後の波形：配線と設定】<br>
+            発振器を <b>周波数 ${p.f} Hz・振幅 ${p.A} Vpp の正弦波</b> に設定して出力し、AD/DA変換機の TB1 に接続してください。<br>
+            DA出力（TB5）をオシロ Ch1、入力（TP1）を Ch2 に接続し、AD/DA変換機を
+            <b>バイポーラ・${p.bits}bit・サンプリング周期 ${p.Ts}µs</b> に設定してください。`,
+        hint: () => 'ヒント: 発振器は FREQ / AMPTD を押してテンキーで数値を入力し、ENTER で確定します。波形は FCTN で切り替えます。AD/DA変換機は SW5（バイポーラ/ユニポーラ）、SW4（ビット数）、サンプリング周期切換を使います。',
+        conditions: p => [
+            ['発振器の電源と OUTPUT が ON',  fgState.power && fgState.outputOn],
+            ['発振器の波形が正弦波（SINE）', fgState.waveform === 'SINE'],
+            [`発振器の周波数が ${p.f} Hz`,    isNear(fgState.freq, p.f, 0.001)],
+            [`発振器の振幅が ${p.A} Vpp`,     isNear(fgState.amptd, p.A, 0.001)],
+            ...PROC3_WIRING_CONDITIONS(),
+            ['バイポーラ（SW5・SW7）',       adDaState.mode === 'bipolar'],
+            [`${p.bits}bit（SW4）`,          adDaState.resolution === p.bits],
+            [`サンプリング周期 ${p.Ts}µs`,   adDaState.samplingPeriodUs === p.Ts],
+        ],
+    },
+
+    // ---------------------------------------------------------------
+    // 第5問（手順4）: 入出力周波数を変えて観察する（エイリアスの条件の設定）
+    // ---------------------------------------------------------------
+    {
+        makeParams: () => ({
+            fKHz: randomPick([1, 2.5, 5, 10, 100, 150, 200]),   // テキストの周波数 [kHz]
+            Ts:   randomPick([5, 200]),                          // テキストのサンプリング周期 [µs]
+        }),
+        text: p => `【第5問 AD/DA変換時の入出力波形：条件の設定】<br>
+            第4問の配線のまま、発振器を <b>周波数 ${p.fKHz} kHz・振幅 3 Vpp の正弦波</b>、AD/DA変換機を
+            <b>バイポーラ・8bit・サンプリング周期 ${p.Ts}µs</b> に設定してください。<br>
+            最後に、観察した波形を残すためにオシロスコープを <b>STOP</b> 状態にしてください。`,
+        hint: () => 'ヒント: 発振器の周波数は Hz で入力します（1 kHz = 1000 Hz）。STOP は Run/Stop ボタンで切り替えます。',
+        conditions: p => [
+            ['発振器の電源と OUTPUT が ON',        fgState.power && fgState.outputOn],
+            ['発振器の波形が正弦波（SINE）',       fgState.waveform === 'SINE'],
+            [`発振器の周波数が ${p.fKHz} kHz`,      isNear(fgState.freq, p.fKHz * 1000, 0.001)],
+            ['発振器の振幅が 3 Vpp',                isNear(fgState.amptd, 3, 0.001)],
+            ...PROC3_WIRING_CONDITIONS(),
+            ['バイポーラ（SW5・SW7）',             adDaState.mode === 'bipolar'],
+            ['8bit（SW4）',                        adDaState.resolution === 8],
+            [`サンプリング周期 ${p.Ts}µs`,         adDaState.samplingPeriodUs === p.Ts],
+            ['オシロスコープが STOP 状態',         scopeState.isOn && !scopeState.isRunning],
+        ],
+    },
 ];
 
 function startTestMode() {
@@ -2567,11 +2675,12 @@ function startTestMode() {
     document.getElementById('test-panel').scrollIntoView({ behavior: 'smooth' });
 }
 
-// 現在の問題を表示し、その問題の初期状態（setup）にオシロを設定する
+// 現在の問題の数値を決めて表示する
 function showQuestion() {
     const q = quizData[testState.currentQuestionIndex];
+    testState.params = q.makeParams();
 
-    document.getElementById('question-text').innerHTML = q.text;
+    document.getElementById('question-text').innerHTML = q.text(testState.params);
     document.getElementById('question-counter').innerText =
         `Q ${testState.currentQuestionIndex + 1} / ${quizData.length}`;
 
@@ -2581,25 +2690,25 @@ function showQuestion() {
 
     document.getElementById('btn-check-answer').style.display = 'inline-block';
     document.getElementById('btn-next-question').style.display = 'none';
-
-    if (q.setup) {
-        q.setup();
-        updateControlPanelUI();
-    }
 }
 
-// 「解答する」: 現在の問題の正解条件（check）を判定する
+// 「解答する」: 機器の状態が問題の条件をすべて満たしているかを判定する
 function checkTestAnswer() {
     const q = quizData[testState.currentQuestionIndex];
+    const p = testState.params;
     const fb = document.getElementById('test-feedback');
 
-    if (!q.check()) {
-        fb.innerHTML = '不正解です。<br>' + q.hint;
+    const unmet = q.conditions(p).filter(([, ok]) => !ok).map(([label]) => label);
+    if (unmet.length > 0) {
+        // パネルが縦に伸びて機器が下へ押し出されないよう、未達成の項目は1行に詰めて並べる
+        fb.innerHTML = '不正解です。<br>まだできていない項目:'
+            + '<span class="test-unmet">' + unmet.map(label => `<span>${label}</span>`).join('') + '</span>'
+            + q.hint(p);
         fb.className = 'feedback-wrong';
         return;
     }
 
-    fb.innerHTML = '正解です！素晴らしい！';
+    fb.innerHTML = '正解です！';
     fb.className = 'feedback-correct';
     document.getElementById('btn-check-answer').style.display = 'none';
 
@@ -2671,9 +2780,11 @@ document.addEventListener('click', e => {
     if (e.target.id === 'experiment-modal') closeExperimentModal();
 });
 
-// 画像の読み込み完了時とウィンドウのリサイズ時に、表示倍率とワイヤーを合わせ直す
+// 画像の読み込み完了時とウィンドウのリサイズ時（ブラウザのズーム変更を含む）に、
+// 表示倍率・機器の位置・ワイヤーを合わせ直す
 window.addEventListener('load', autoFit);
 window.addEventListener('resize', autoFit);
+window.addEventListener('resize', keepAllEquipmentInView);
 window.addEventListener('resize', redrawWires);
 
 // 状態表示バーを初期状態に合わせる
