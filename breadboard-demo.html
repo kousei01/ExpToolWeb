@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>ブレッドボード試作（SRX-32PS）</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #eaeff2;
+            font-family: "Hiragino Sans", Meiryo, sans-serif;
+            color: #2c3e50;
+        }
+        h1 { font-size: 18px; margin: 0 0 6px; }
+        p  { font-size: 13px; margin: 0 0 12px; color: #555; }
+        #board { max-width: 1000px; }
+
+        /* --- ブレッドボード --- */
+        .bb-svg { width: 100%; height: auto; display: block; user-select: none; }
+        .bb-panel-text  { fill: #fff; font-size: 10px; font-weight: bold; font-family: sans-serif; }
+        .bb-panel-small { font-size: 8px; }
+        .bb-panel-tiny  { font-size: 7px; }
+        .bb-panel-model { font-size: 20px; letter-spacing: 1px; }
+        .bb-lcd { font-family: 'Courier New', monospace; font-size: 15px; font-weight: bold; fill: #1b2a1f; }
+        .bb-switch { cursor: pointer; }
+        .bb-rail-label { font-size: 8px; font-weight: bold; font-family: sans-serif; }
+        .bb-row-label  { font-size: 7px; fill: #8a8778; font-family: sans-serif; }
+        .bb-col-label  { font-size: 6px; fill: #8a8778; font-family: sans-serif; }
+
+        /* 穴: ふだんは濃い灰色。つながっている穴は緑、ジャンパ線の1本目は橙 */
+        .bb-hole { fill: #55534c; cursor: pointer; }
+        .bb-hole:hover { fill: #000; }
+        .bb-hole-net { fill: #2ecc71; }
+        .bb-hole-pending { fill: #ff9800; stroke: #e65100; stroke-width: 1; }
+
+        .bb-ic-label { fill: #ddd; font-size: 8px; font-family: sans-serif; font-weight: bold; }
+        .bb-ic-pin { cursor: pointer; }
+        .bb-wire { cursor: context-menu; }
+        .bb-tip-box  { fill: rgba(0, 0, 0, 0.85); }
+        .bb-tip-text { fill: #fff; font-size: 9px; font-family: sans-serif; }
+    </style>
+</head>
+<body>
+    <h1>ブレッドボード（SRX-32PS）の SVG 試作</h1>
+    <p>
+        穴にマウスを乗せる → 内部でつながっている穴が緑に光る ／ 穴を2つ順にクリック → ジャンパ線 ／ 線を右クリック → 外す ／
+        IC のピンにマウスを乗せる → ピン名 ／ POWER の SW1・SW2 をクリック → ON/OFF
+    </p>
+    <div id="board"></div>
+
+    <script src="breadboard.js"></script>
+    <script>
+        const board = createBreadboard(document.getElementById('board'));
+
+        // 動作確認用: JK フリップフロップの IC を2個置き、電源配線の例を1本ずつ張っておく
+        board.placeIC('74HC107', 'B1', 10);
+        board.placeIC('74HC107', 'B1', 22);
+        board.addWire('B1-A10', 'R1-1-10', '#e53935');   // 1個目の14番ピン(VCC, E10)の列 → 上の +5V レール
+        board.addWire('B1-J16', 'R2-0-16', '#212121');   // 1個目の7番ピン(GND, F16)の列 → 下の GND レール
+    </script>
+</body>
+</html>
