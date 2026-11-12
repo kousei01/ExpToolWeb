@@ -33,8 +33,34 @@
         .bb-hole-net { fill: #2ecc71; }
         .bb-hole-pending { fill: #ff9800; stroke: #e65100; stroke-width: 1; }
 
-        .bb-ic-label { fill: #ddd; font-size: 8px; font-family: sans-serif; font-weight: bold; }
+        .bb-ic-label { fill: #ddd; font-size: 7px; font-family: sans-serif; font-weight: bold; }
+        .bb-ic-body { cursor: grab; }
         .bb-ic-pin { cursor: pointer; }
+        .bb-ic-moving { opacity: 0.3; }                   /* 挿し直し中の元の位置 */
+        .bb-ic-ghost { opacity: 0.7; }                    /* ドラッグ中の影（挿せる位置） */
+        .bb-ic-ghost-ng { opacity: 0.6; }                 /* 挿せない位置は赤 */
+        .bb-ic-ghost-ng rect { fill: #c62828 !important; }
+
+        /* 部品箱 */
+        .bb-tray {
+            display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+            margin-bottom: 10px; padding: 10px 12px;
+            background: #34495e; border-radius: 8px; color: #fff;
+        }
+        .bb-tray-title { font-weight: bold; font-size: 14px; margin-right: 6px; }
+        .bb-tray-title small { display: block; font-weight: normal; font-size: 11px; color: #bdc3c7; }
+        .bb-tray-item {
+            display: flex; flex-direction: column; align-items: center; gap: 4px;
+            padding: 6px 10px; background: #2c3e50; border: 1px solid #46637f; border-radius: 6px;
+            cursor: grab; user-select: none; touch-action: none;
+        }
+        .bb-tray-item:hover { background: #415b76; }
+        .bb-tray-chip {
+            position: relative; padding: 5px 12px; background: #2b2b2b; border-radius: 3px;
+            color: #ddd; font: bold 11px sans-serif;
+            border-top: 3px dotted #c9c9c9; border-bottom: 3px dotted #c9c9c9;   /* ピンの並び */
+        }
+        .bb-tray-desc { font-size: 11px; color: #ecf0f1; }
         .bb-wire { cursor: context-menu; }
         .bb-tip-box  { fill: rgba(0, 0, 0, 0.85); }
         .bb-tip-text { fill: #fff; font-size: 9px; font-family: sans-serif; }
@@ -43,8 +69,10 @@
 <body>
     <h1>ブレッドボード（SRX-32PS）の SVG 試作</h1>
     <p>
-        穴にマウスを乗せる → 内部でつながっている穴が緑に光る ／ 穴を2つ順にクリック → ジャンパ線 ／ 線を右クリック → 外す ／
-        IC のピンにマウスを乗せる → ピン名 ／ POWER の SW1・SW2 をクリック → ON/OFF
+        部品箱の IC をドラッグ → 中央の溝の上で離すと挿さる（挿せない位置は赤）／ 挿した IC をドラッグ → 挿し直し ／
+        ダブルクリック → 向きを反転 ／ 右クリック → 抜く<br>
+        穴にマウスを乗せる → つながっている穴が緑に光る ／ 空いている穴を2つ順にクリック → ジャンパ線（IC のピンには、同じ列の別の穴から）／ 線を右クリック → 外す ／
+        POWER の SW1・SW2 をクリック → ON/OFF
     </p>
     <div id="board"></div>
 
@@ -52,11 +80,7 @@
     <script>
         const board = createBreadboard(document.getElementById('board'));
 
-        // 動作確認用: JK フリップフロップの IC を2個置き、電源配線の例を1本ずつ張っておく
-        board.placeIC('74HC107', 'B1', 10);
-        board.placeIC('74HC107', 'B1', 22);
-        board.addWire('B1-A10', 'R1-1-10', '#e53935');   // 1個目の14番ピン(VCC, E10)の列 → 上の +5V レール
-        board.addWire('B1-J16', 'R2-0-16', '#212121');   // 1個目の7番ピン(GND, F16)の列 → 下の GND レール
+        // 部品箱から IC を挿して試せるよう、最初は何も置かない
     </script>
 </body>
 </html>
