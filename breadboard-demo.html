@@ -12,6 +12,7 @@
             color: #2c3e50;
         }
         h1 { font-size: 18px; margin: 0 0 6px; }
+        h2 { font-size: 15px; margin: 0 0 8px; }
         p  { font-size: 13px; margin: 0 0 12px; color: #555; }
         #board { max-width: 1000px; }
 
@@ -64,6 +65,39 @@
         .bb-wire { cursor: context-menu; }
         .bb-tip-box  { fill: rgba(0, 0, 0, 0.85); }
         .bb-tip-text { fill: #fff; font-size: 9px; font-family: sans-serif; }
+
+        /* 外部機器の線 */
+        .bb-lead { cursor: context-menu; }
+        .bb-lead-label { font-size: 7px; font-weight: bold; font-family: sans-serif; pointer-events: none; }
+        .bb-lead-item {
+            display: flex; align-items: center; gap: 6px;
+            padding: 5px 9px; background: #2c3e50; border: 1px solid #46637f; border-radius: 6px;
+            color: #fff; font-size: 12px; cursor: pointer;
+        }
+        .bb-lead-item:hover { background: #415b76; }
+        .bb-lead-swatch { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #111; }
+        .bb-lead-where { color: #95a5a6; }
+        .bb-lead-plugged .bb-lead-where { color: #2ecc71; }
+        .bb-lead-selected { outline: 2px solid #ff9800; background: #4e3a1e; }
+
+        /* --- 確認用パネル --- */
+        .check { max-width: 1000px; margin-top: 14px; display: grid; gap: 12px; }
+        .card { background: #fff; border-radius: 8px; padding: 12px 14px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+        .card .note { font-size: 12px; color: #7f8c8d; margin: 0 0 8px; }
+        .row { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; font-size: 13px; }
+        .row label { display: flex; align-items: center; gap: 4px; }
+        .row input[type=number] { width: 80px; }
+        button.action { padding: 6px 12px; border-radius: 6px; border: 1px solid #2c3e50; background: #fff; cursor: pointer; font-size: 13px; }
+        button.action:hover { background: #ecf0f1; }
+        button.output-on { background: #27ae60; color: #fff; border-color: #1e8449; }
+        #status { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+        #status li { padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; }
+        #status .error { background: #fdecea; color: #b71c1c; }
+        #status .warn  { background: #fff4e0; color: #8a4b00; }
+        #status .info  { background: #eef3f7; color: #34495e; }
+        #status .ok    { background: #e8f6ee; color: #1e7a45; }
+        #timing { width: 100%; height: auto; display: block; background: #111; border-radius: 4px; }
+        #timing-info { font-size: 12px; color: #555; margin-top: 4px; min-height: 1.2em; }
     </style>
 </head>
 <body>
@@ -71,16 +105,222 @@
     <p>
         部品箱の IC をドラッグ → 中央の溝の上で離すと挿さる（挿せない位置は赤）／ 挿した IC をドラッグ → 挿し直し ／
         ダブルクリック → 向きを反転 ／ 右クリック → 抜く<br>
-        穴にマウスを乗せる → つながっている穴が緑に光る ／ 空いている穴を2つ順にクリック → ジャンパ線（IC のピンには、同じ列の別の穴から）／ 線を右クリック → 外す ／
-        POWER の SW1・SW2 をクリック → ON/OFF
+        穴にマウスを乗せる → つながっている穴が緑に光り、その状態（H / L など）を表示 ／ 空いている穴を2つ順にクリック → ジャンパ線 ／ 線を右クリック → 外す<br>
+        外部機器の線をクリック → 挿す穴をクリック ／ POWER の SW1（+5V）・SW2（±15V）をクリック → ON/OFF
     </p>
     <div id="board"></div>
 
+    <div class="check">
+        <div class="card">
+            <h2>回路の状態</h2>
+            <ul id="status"></ul>
+        </div>
+
+        <div class="card">
+            <h2>確認用の信号源（WaveGen の代わり）</h2>
+            <p class="note">本番ではオシロスコープ（MSOX2004A）の WaveGen をつなぐ。ここではブレッドボードの動作確認のため、同じ設定項目だけを置いている。</p>
+            <div class="row">
+                <span>波形: 方形波</span>
+                <label>周波数 <input id="wg-freq" type="number" value="1000" min="1" step="any"> Hz</label>
+                <label>振幅 <input id="wg-vpp" type="number" value="5" step="0.1"> Vpp</label>
+                <label>オフセット <input id="wg-offset" type="number" value="2.5" step="0.1"> V</label>
+                <label>デューティ <input id="wg-duty" type="number" value="20" min="1" max="99"> %</label>
+                <button class="action" id="wg-output" type="button">出力 OFF</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>確認用のタイミング表示（ロジックアナライザの代わり）</h2>
+            <p class="note">電源投入（時刻 0）からの各プローブ（D0〜D7）の波形。赤い帯は不定（X）、灰色の点線は浮いている（Z）。グラフの上でマウスを動かすと時刻を表示。</p>
+            <div class="row" style="margin-bottom:8px">
+                <label>時間/目盛
+                    <select id="la-div">
+                        <option value="10">10 ns</option><option value="20">20 ns</option><option value="50">50 ns</option>
+                        <option value="100">100 ns</option><option value="200">200 ns</option><option value="500">500 ns</option>
+                        <option value="1000">1 µs</option><option value="2000">2 µs</option><option value="5000">5 µs</option>
+                        <option value="10000">10 µs</option><option value="20000">20 µs</option><option value="50000">50 µs</option>
+                        <option value="100000">100 µs</option><option value="200000">200 µs</option><option value="500000">500 µs</option>
+                        <option value="1000000">1 ms</option><option value="2000000" selected>2 ms</option>
+                    </select>
+                </label>
+                <label>表示の開始 <input id="la-start" type="number" value="0" min="0" step="any"> µs</label>
+            </div>
+            <svg id="timing" viewBox="0 0 900 300"></svg>
+            <div id="timing-info"></div>
+        </div>
+
+        <div class="card">
+            <h2>確認用の操作</h2>
+            <div class="row">
+                <button class="action" id="build-counter" type="button">図6のカウンタ回路を組む</button>
+                <button class="action" id="clear-all" type="button">すべて外す</button>
+                <span class="note" style="margin:0">組んだ後、SW1 を ON にし、信号源の出力を ON にすると動く</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="logic-sim.js"></script>
     <script src="breadboard.js"></script>
     <script>
-        const board = createBreadboard(document.getElementById('board'));
+        // ---------------------------------------------------------------
+        //  外部機器の線（オシロスコープ MSOX2004A の WaveGen 出力とデジタルプローブ）
+        // ---------------------------------------------------------------
+        const PROBE_COLORS = ['#ffffff', '#8d6e63', '#ef5350', '#ff9800', '#ffeb3b', '#66bb6a', '#42a5f5', '#ab47bc'];
+        const PROBES = PROBE_COLORS.map((color, i) => ({ id: `D${i}`, label: `ロジアナ D${i}`, short: `D${i}`, role: 'probe', color }));
+        const board = createBreadboard(document.getElementById('board'), {
+            terminals: [
+                { id: 'WG',     label: 'WaveGen 出力',  short: 'Gen',   role: 'source', color: '#e53935' },
+                { id: 'WG-GND', label: 'WaveGen GND',   short: 'G-GND', role: 'ground', color: '#212121' },
+                ...PROBES,
+                { id: 'LA-GND', label: 'ロジアナ GND',  short: 'D-GND', role: 'ground', color: '#424242' },
+            ],
+        });
 
-        // 部品箱から IC を挿して試せるよう、最初は何も置かない
+        // ---------------------------------------------------------------
+        //  信号源の設定
+        // ---------------------------------------------------------------
+        const $ = id => document.getElementById(id);
+        let outputOn = false;
+        function applySignal() {
+            board.setSignal('WG', {
+                kind: 'square',
+                freqHz: Math.max(1, Number($('wg-freq').value) || 1000),
+                vpp: Number($('wg-vpp').value) || 0,
+                offsetV: Number($('wg-offset').value) || 0,
+                duty: Math.min(99, Math.max(1, Number($('wg-duty').value) || 50)),
+                enabled: outputOn,
+            });
+        }
+        ['wg-freq', 'wg-vpp', 'wg-offset', 'wg-duty'].forEach(id => $(id).addEventListener('change', applySignal));
+        $('wg-output').addEventListener('click', () => {
+            outputOn = !outputOn;
+            $('wg-output').textContent = outputOn ? '出力 ON' : '出力 OFF';
+            $('wg-output').classList.toggle('output-on', outputOn);
+            applySignal();
+        });
+
+        // ---------------------------------------------------------------
+        //  状態の一覧
+        // ---------------------------------------------------------------
+        function renderStatus() {
+            const list = board.getStatus();
+            $('status').innerHTML = list.length === 0
+                ? '<li class="ok">問題は見つかっていません</li>'
+                : list.map(s => `<li class="${s.level}">${{ error: '✖', warn: '⚠', info: 'ℹ' }[s.level]} ${s.text}</li>`).join('');
+        }
+
+        // ---------------------------------------------------------------
+        //  タイミング表示
+        // ---------------------------------------------------------------
+        const W = 900, LEFT = 60, ROW_H = 34, TOP = 10;
+        const formatTime = ns => Math.abs(ns) >= 1e6 ? `${+(ns / 1e6).toFixed(4)} ms`
+                               : Math.abs(ns) >= 1e3 ? `${+(ns / 1e3).toFixed(4)} µs` : `${+ns.toFixed(2)} ns`;
+        let view = null;
+        function renderTiming() {
+            const svg = $('timing');
+            const div = Number($('la-div').value);
+            const start = Math.max(0, Number($('la-start').value) || 0) * 1000;
+            const span = div * 10, end = start + span;
+            const result = board.simulate(end);
+            const rows = PROBES.filter(p => result.trace(p.id) !== null);
+            const height = TOP * 2 + Math.max(1, rows.length) * ROW_H + 16;
+            svg.setAttribute('viewBox', `0 0 ${W} ${height}`);
+            const x = t => LEFT + (t - start) / span * (W - LEFT - 10);
+            let html = '';
+            for (let i = 0; i <= 10; i++) {
+                const gx = LEFT + i * (W - LEFT - 10) / 10;
+                html += `<line x1="${gx}" y1="${TOP}" x2="${gx}" y2="${height - 16}" stroke="#333" stroke-dasharray="2 3"/>`;
+            }
+            html += `<text x="${LEFT}" y="${height - 4}" fill="#aaa" font-size="11">${formatTime(start)}</text>`;
+            html += `<text x="${W - 10}" y="${height - 4}" fill="#aaa" font-size="11" text-anchor="end">${formatTime(end)}（${formatTime(div)}/目盛）</text>`;
+            if (rows.length === 0) {
+                html += `<text x="${W / 2}" y="${TOP + 22}" fill="#aaa" font-size="13" text-anchor="middle">プローブ（D0〜D7）を穴に挿すと、ここに波形が出ます</text>`;
+            }
+            rows.forEach((p, r) => {
+                const yHigh = TOP + r * ROW_H + 6, yLow = yHigh + ROW_H - 14, yMid = (yHigh + yLow) / 2;
+                html += `<text x="8" y="${yMid + 4}" fill="${p.color}" font-size="12" font-weight="bold">${p.id}</text>`;
+                const trace = result.trace(p.id);
+                let path = '';
+                trace.forEach((pt, i) => {
+                    const t0 = Math.max(pt.t, start), t1 = Math.min(i + 1 < trace.length ? trace[i + 1].t : end, end);
+                    if (t1 < start || t0 > end || t1 < t0) return;
+                    const x0 = x(t0), x1 = x(t1);
+                    if (pt.v === 0 || pt.v === 1) {
+                        const y = pt.v === 1 ? yHigh : yLow;
+                        path += `${path ? 'L' : 'M'} ${x0} ${y} L ${x1} ${y} `;
+                    } else {
+                        if (path) { html += `<path d="${path}" fill="none" stroke="${p.color}" stroke-width="1.5"/>`; path = ''; }
+                        html += pt.v === 'X'
+                            ? `<rect x="${x0}" y="${yHigh}" width="${Math.max(1, x1 - x0)}" height="${yLow - yHigh}" fill="rgba(229,57,53,.45)"/>`
+                            : `<line x1="${x0}" y1="${yMid}" x2="${x1}" y2="${yMid}" stroke="#888" stroke-dasharray="3 3"/>`;
+                    }
+                });
+                if (path) html += `<path d="${path}" fill="none" stroke="${p.color}" stroke-width="1.5"/>`;
+            });
+            html += `<line id="cursor" x1="-10" y1="${TOP}" x2="-10" y2="${height - 16}" stroke="#ffd54f"/>`;
+            svg.innerHTML = html;
+            view = { start, span };
+            $('timing-info').textContent = result.truncated ? '※ 計算量が多すぎるため途中までしか表示していません（時間/目盛を小さくしてください）' : '';
+        }
+        $('timing').addEventListener('mousemove', e => {
+            if (!view) return;
+            const svg = $('timing');
+            const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY;
+            const pt = p.matrixTransform(svg.getScreenCTM().inverse());
+            if (pt.x < LEFT) return;
+            const t = view.start + (pt.x - LEFT) / (W - LEFT - 10) * view.span;
+            const cursor = $('cursor');
+            cursor.setAttribute('x1', pt.x); cursor.setAttribute('x2', pt.x);
+            $('timing-info').textContent = `カーソル: ${formatTime(t)}`;
+        });
+        ['la-div', 'la-start'].forEach(id => $(id).addEventListener('change', renderTiming));
+
+        board.onChange(() => { renderStatus(); renderTiming(); });
+        renderStatus();
+        renderTiming();
+
+        // ---------------------------------------------------------------
+        //  確認用: 図6（JK-FF による非同期式4ビットカウンタ）を組む
+        //   U1・U2 = TC74HC107AP。J・K・CLR̅ はすべて +5V、Q を次の段の CLK へ
+        // ---------------------------------------------------------------
+        function railHole(strip, column) {
+            // 指定した列にいちばん近い、空いている電源レールの穴
+            const used = id => board.wires.some(w => w.a === id || w.b === id) || board.terminals.some(t => t.holeId === id);
+            return board.holes.filter(h => h.strip === strip && !used(h.id))
+                .sort((a, b) => Math.abs(a.x - board.holes.find(h => h.id === `B1-A${column}`).x) - Math.abs(b.x - board.holes.find(h => h.id === `B1-A${column}`).x))[0].id;
+        }
+        function buildCounter() {
+            clearAll();
+            const PLUS5_TOP = 'R1-1', PLUS5_BOTTOM = 'R2-1', GND = 'R2-0';
+            [10, 20].forEach(c => {
+                board.placeIC('74HC107', 'B1', c);
+                // 上側の列（E 行のピン）: 14 VCC, 13 1CLR̅, 11 2K, 9 2CLR̅, 8 2J → +5V
+                [c, c + 1, c + 3, c + 5, c + 6].forEach(col => board.addWire(`B1-D${col}`, railHole(PLUS5_TOP, col), '#e53935'));
+                // 下側の列（F 行のピン）: 1 1J, 4 1K → +5V、7 GND → GND
+                [c, c + 3].forEach(col => board.addWire(`B1-G${col}`, railHole(PLUS5_BOTTOM, col), '#e53935'));
+                board.addWire(`B1-G${c + 6}`, railHole(GND, c + 6), '#212121');
+                // 1Q（3番, F 行 c+2）→ 2CLK（10番, E 行 c+4）
+                board.addWire(`B1-G${c + 2}`, `B1-C${c + 4}`, '#43a047');
+            });
+            // U1 の 2Q（Q1）→ U2 の 1CLK
+            board.addWire('B1-G14', 'B1-C22', '#43a047');
+            // 外部機器: クロック = U1 の 1CLK（E12）
+            board.plugTerminal('WG', 'B1-C12');
+            board.plugTerminal('WG-GND', railHole(GND, 30));
+            board.plugTerminal('D0', 'B1-B12');   // Clock
+            board.plugTerminal('D1', 'B1-H12');   // Q0
+            board.plugTerminal('D2', 'B1-H14');   // Q1
+            board.plugTerminal('D3', 'B1-H22');   // Q2
+            board.plugTerminal('D4', 'B1-H24');   // Q3
+            board.plugTerminal('LA-GND', railHole(GND, 34));
+        }
+        function clearAll() {
+            board.terminals.forEach(t => board.unplugTerminal(t.id));
+            [...board.wires].forEach(w => board.removeWire(w));
+            [...board.ics].forEach(ic => board.removeIC(ic));
+        }
+        $('build-counter').addEventListener('click', buildCounter);
+        $('clear-all').addEventListener('click', clearAll);
     </script>
 </body>
 </html>
