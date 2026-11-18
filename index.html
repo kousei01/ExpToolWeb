@@ -71,6 +71,7 @@
                 <option value="model-adda">AD/DA 変換基板</option>
                 <option value="model-fg">信号発生器</option>
                 <option value="model-ps">直流電源</option>
+                <option value="model-bb">ブレッドボード</option>
             </select>
 
             <input type="range" id="size-slider" min="0.5" max="2.0" step="0.1" value="1.0"
@@ -244,6 +245,19 @@
                 <area alt="Posツマミ" title="Posツマミ" coords="1777,164,26" shape="circle">
                 <area alt="CursorA" title="CursorA" coords="2114,357,27" shape="circle">
                 <area alt="CursorB" title="CursorB" coords="2114,504,27" shape="circle">
+
+                <!-- 前面パネル下の端子（ブレッドボードの穴へ結線する）: class="terminal-spot" -->
+                <!--   Gen Out … 内蔵の発振器（WaveGen）の出力 -->
+                <!--   DIGITAL … ロジックアナライザのプローブ。コネクタを8つに分けて D0〜D7 の線にしている -->
+                <area class="terminal-spot" alt="Gen Out" title="GenOut" coords="392,1054,30" shape="circle">
+                <area class="terminal-spot" alt="D0" title="D0" coords="462,1030,507,1086" shape="rect">
+                <area class="terminal-spot" alt="D1" title="D1" coords="507,1030,553,1086" shape="rect">
+                <area class="terminal-spot" alt="D2" title="D2" coords="553,1030,599,1086" shape="rect">
+                <area class="terminal-spot" alt="D3" title="D3" coords="599,1030,644,1086" shape="rect">
+                <area class="terminal-spot" alt="D4" title="D4" coords="644,1030,690,1086" shape="rect">
+                <area class="terminal-spot" alt="D5" title="D5" coords="690,1030,736,1086" shape="rect">
+                <area class="terminal-spot" alt="D6" title="D6" coords="736,1030,781,1086" shape="rect">
+                <area class="terminal-spot" alt="D7" title="D7" coords="781,1030,827,1086" shape="rect">
             </map>
         </div>
     </div>
@@ -404,6 +418,27 @@
     </div>
 
     <!-- ====================================== -->
+    <!-- ブレッドボード (SRX-32PS)                   -->
+    <!--   写真ではなく breadboard.js が SVG で描く。     -->
+    <!--   ボード上の操作（IC・配線）と重ならないよう、    -->
+    <!--   移動は上の帯をドラッグして行う                 -->
+    <!-- ====================================== -->
+    <div id="bb-container" class="draggable-equipment" style="top: 20px; left: 20px; display: none;">
+        <div id="model-bb" class="instrument-container">
+            <div class="bb-handle">
+                <span>ブレッドボード SRX-32PS　<small>（この帯をドラッグで移動）</small></span>
+                <span class="bb-handle-buttons">
+                    <button type="button" onclick="buildCounterCircuitFromButton()" title="教科書 2-I-7 の図6（4ビットカウンタ）と、オシロとの線（Gen Out・D0〜D4）を組みます">🔧 カウンタ回路を組む</button>
+                    <button type="button" onclick="saveBreadboardCircuit()" title="IC・ジャンパ線・機器の線をこのブラウザに保存します">💾 回路を保存</button>
+                    <button type="button" onclick="loadBreadboardCircuit()" title="保存した回路を組み直します">📂 保存した回路を読み込む</button>
+                    <button type="button" onclick="clearBreadboardCircuit()" title="IC・ジャンパ線・機器の線をすべて外します">🗑 全部外す</button>
+                </span>
+            </div>
+            <div id="bb-root"></div>
+        </div>
+    </div>
+
+    <!-- ====================================== -->
     <!-- 説明書（INFO の「説明書」で表示） -->
     <!-- ====================================== -->
     <div id="manual-screen" class="manual-container">
@@ -525,6 +560,7 @@
             <li onclick="toggleEquipment('ps')">🔋 直流電源</li>
             <li onclick="toggleEquipment('fg')">🔊 発振器</li>
             <li onclick="toggleEquipment('adda')">AD/DA変換機</li>
+            <li onclick="toggleEquipment('bb')">🧩 ブレッドボード</li>
         </ul>
     </div>
 </div>
@@ -539,19 +575,23 @@
         <ul class="equipment-list">
             <li onclick="showExperiment('exp1')">
                 <span style="font-size:11px;color:#888;">実験1</span><br>
-                AD/DA変換
+                AD/DA変換（手順1〜4）
             </li>
-            <li onclick="showExperiment('exp2')">
+            <li onclick="showExperiment('exp-interface')">
                 <span style="font-size:11px;color:#888;">実験2</span><br>
                 インターフェース
             </li>
-            <li onclick="showExperiment('exp3')">
+            <li onclick="showExperiment('exp-sensor')">
                 <span style="font-size:11px;color:#888;">実験3</span><br>
                 センサ
             </li>
-            <li onclick="showExperiment('exp4')">
-                <span style="font-size:11px;color:#888;">実験4</span><br>
-                汎用IC
+            <li onclick="openIcGuide('2-I-7')">
+                <span style="font-size:11px;color:#888;">実験4（2-I-7）</span><br>
+                汎用IC I：カウンタ回路
+            </li>
+            <li onclick="openIcGuide('2-I-8')">
+                <span style="font-size:11px;color:#888;">実験4（2-I-8）</span><br>
+                汎用IC II：組み合わせ回路
             </li>
         </ul>
     </div>
@@ -571,6 +611,11 @@
 </div>
 
 
+<!-- ブレッドボードと論理回路の計算（script.js より先に読み込む） -->
+<script src="logic-sim.js"></script>
+<script src="breadboard.js"></script>
 <script src="script.js"></script>
+<!-- オシロの WaveGen・ロジックアナライザと、ブレッドボードの結線（script.js の後に読み込む） -->
+<script src="digital-ic.js"></script>
 </body>
-</html>
+</html>

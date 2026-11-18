@@ -15,6 +15,8 @@
 //      netCount: ネットの数（0 〜 netCount-1 の番号で指定する）,
 //      fixed:   [{ net, value }]                         … 電源レールなど、ずっと同じ値を出すもの
 //      sources: [{ net, kind: 'square', periodNs, highNs, high, low }]   … 方形波（t=0 で high から始まる）
+//               [{ net, kind: 'pattern', periodNs, segments: [{ startNs, value }] }]
+//                 … 1周期の中を区間に分けた値の並びを繰り返す（正弦波・三角波を論理値に直したものなど）
 //               [{ net, kind: 'constant', value }]
 //      gates:   [{ fn: 'NOT' | 'AND' | 'OR', inputs: [net...], output: net, delayNs }]
 //      flipflops: [{ kind: 'JK', j, k, clk, clr, q, qn, clkToQNs, clrToQNs, init: 0 | 1 }]
@@ -58,7 +60,9 @@ function simulateLogic(circuit, durationNs, options = {}) {
     (circuit.fixed || []).forEach(f => addDriver(f.net, f.value));
 
     const sources = (circuit.sources || []).map(s => {
-        const initial = s.kind === 'square' ? (s.highNs > 0 ? s.high : s.low) : s.value;
+        const initial = s.kind === 'square'  ? (s.highNs > 0 ? s.high : s.low)
+                      : s.kind === 'pattern' ? s.segments[0].value
+                      : s.value;
         return { ...s, driver: addDriver(s.net, initial) };
     });
 
@@ -125,8 +129,22 @@ function simulateLogic(circuit, durationNs, options = {}) {
         drv.pendingSeq = push({ t, d, v: value, kind: 'output' });
     }
 
-    // 方形波の次の切り替わりを予約
+    // 信号源の次の切り替わりを予約
     function scheduleSourceEdge(src, now) {
+        if (src.kind === 'pattern') {
+            // 今の区間の次の区間の始まり（最後の区間なら次の周期の最初）
+            const segs = src.segments;
+            if (segs.length < 2) return;
+            const k = Math.floor(now / src.periodNs + 1e-9);
+            const phase = now - k * src.periodNs;
+            let i = segs.length - 1;
+            while (i > 0 && segs[i].startNs > phase + 1e-9) i--;
+            const next = i + 1 < segs.length
+                ? { t: k * src.periodNs + segs[i + 1].startNs, v: segs[i + 1].value }
+                : { t: (k + 1) * src.periodNs, v: segs[0].value };
+            push({ t: next.t, d: src.driver, v: next.v, kind: 'source', src });
+            return;
+        }
         if (src.kind !== 'square' || src.high === src.low) return;
         const k = Math.floor(now / src.periodNs + 1e-9);
         const fall = k * src.periodNs + src.highNs;

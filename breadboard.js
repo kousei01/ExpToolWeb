@@ -28,6 +28,8 @@
 //        terminals: [ { id: 'WG', label: 'WaveGen 出力', short: 'Gen', role: 'source', color: '#fdd835' },
 //                     { id: 'WG-GND', label: 'WaveGen GND', short: 'GND', role: 'ground' },
 //                     { id: 'D0', label: 'ロジアナ D0', short: 'D0', role: 'probe' }, ... ] });
+//    （options.leadTray: false で外部機器の線の一覧を出さない。options.onHoleClick(穴の id) が true を返すと、
+//      その穴のクリックは本体側の操作として扱い、ブレッドボードでは何もしない）
 //    board.setSignal('WG', { kind: 'square', freqHz: 1000, vpp: 5, offsetV: 2.5, duty: 20, enabled: true });
 //    const result = board.simulate(20e6);      // 電源投入から 20 ms 分を計算（単位 ns）
 //    result.trace('D0')                         // → [{ t: ns, v: 0 | 1 | 'X' | 'Z' }, ...]
@@ -97,17 +99,18 @@ const BB_IC_PINOUTS = {
     '74HC32':  ['1A', '1B', '1Y', '2A', '2B', '2Y', 'GND', '3Y', '3A', '3B', '4Y', '4A', '4B', 'VCC'],
 };
 
-// IC の中身（ピン名で指定）と伝搬遅延。遅延は Vcc=4.5V 付近の標準値の目安（ns）。データシートで要確認
+// IC の中身（ピン名で指定）と伝搬遅延。遅延は Vcc=5V・負荷が軽いとき（ロジアナのプローブ程度）の目安（ns）。
+// 教科書 2-I-7 の図9（1段あたり約 9.3ns）に合わせている。データシートで要確認
 const BB_GATE_UNITS = (fn, n, inputs) => Array.from({ length: n }, (_, i) =>
     ({ kind: fn, in: inputs.map(x => `${i + 1}${x}`), out: `${i + 1}Y` }));
 const BB_IC_MODELS = {
-    '74HC04':  { units: BB_GATE_UNITS('NOT', 6, ['A']),      delayNs: 8 },
-    '74HC08':  { units: BB_GATE_UNITS('AND', 4, ['A', 'B']), delayNs: 9 },
-    '74HC32':  { units: BB_GATE_UNITS('OR',  4, ['A', 'B']), delayNs: 9 },
+    '74HC04':  { units: BB_GATE_UNITS('NOT', 6, ['A']),      delayNs: 6 },
+    '74HC08':  { units: BB_GATE_UNITS('AND', 4, ['A', 'B']), delayNs: 7 },
+    '74HC32':  { units: BB_GATE_UNITS('OR',  4, ['A', 'B']), delayNs: 7 },
     '74HC107': {
         units: [1, 2].map(n => ({ kind: 'JK', j: `${n}J`, k: `${n}K`, clk: `${n}CLK`, clr: `${n}CLR̅`, q: `${n}Q`, qn: `${n}Q̅` })),
-        clkToQNs: 16,    // CLK の立ち下がり → Q
-        clrToQNs: 15,    // CLR̅ → Q
+        clkToQNs: 10,    // CLK の立ち下がり → Q
+        clrToQNs: 10,    // CLR̅ → Q
     },
 };
 // 個体差: 同じ型番でも遅延が少しずつ違う（±この割合）。遅延時間の測定で ①〜④ が同じ値にならないように
@@ -384,6 +387,8 @@ function createBreadboard(container, options = {}) {
 
     // 穴のクリック: 1つ目を選び、2つ目でジャンパ線を張る（同じ穴をもう一度押すと取り消し）
     function clickHole(hole) {
+        // 外部（仮想実験室の本体など）が、機器の端子の線をこの穴に挿す操作として受け取った場合
+        if (options.onHoleClick && options.onHoleClick(hole.id)) return;
         if (pendingHole === hole) {
             hole.el.classList.remove('bb-hole-pending');
             pendingHole = null;
@@ -795,23 +800,41 @@ function createBreadboard(container, options = {}) {
             const net = holeNet(holeById[t.holeId]);
             if (t.role !== 'source' || !t.signal || !t.signal.enabled) return;
             const sig = t.signal;
-            const vHigh = sig.kind === 'square' ? sig.offsetV + sig.vpp / 2 : sig.volts;
-            const vLow  = sig.kind === 'square' ? sig.offsetV - sig.vpp / 2 : sig.volts;
             const L = BB_LOGIC_LEVELS;
             const toLogic = v => v >= L.vih ? 1 : v <= L.vil ? 0 : 'X';
             const fmt = v => v.toFixed(2);
+            const isDc = sig.kind === 'dc';
+            const vHigh = isDc ? sig.volts : sig.offsetV + sig.vpp / 2;
+            const vLow  = isDc ? sig.volts : sig.offsetV - sig.vpp / 2;
             if (vLow < L.minV || vHigh > L.maxV) {
                 status.push({ level: 'warn', text: `${t.label} の電圧（${fmt(vLow)} 〜 ${fmt(vHigh)} V）が 74HC の入力範囲（0 〜 5 V）を超えています。振幅とオフセットを確認してください` });
-            } else if (toLogic(vHigh) === 'X' || toLogic(vLow) === 'X') {
+            } else if (sig.kind === 'square' && (toLogic(vHigh) === 'X' || toLogic(vLow) === 'X')) {
                 status.push({ level: 'warn', text: `${t.label} の電圧（${fmt(vLow)} 〜 ${fmt(vHigh)} V）では H / L を正しく判定できません（H は ${L.vih} V 以上、L は ${L.vil} V 以下）` });
+            } else if (isDc && toLogic(vHigh) === 'X') {
+                status.push({ level: 'warn', text: `${t.label} の電圧（${fmt(vHigh)} V）では H / L を正しく判定できません（H は ${L.vih} V 以上、L は ${L.vil} V 以下）` });
             }
-            let high = toLogic(vHigh), low = toLogic(vLow);
-            if (!grounded) { high = 'X'; low = 'X'; }
-            if (sig.kind === 'square') {
+            const logicOf = v => grounded ? toLogic(v) : 'X';
+            if (isDc) {
+                circuit.sources.push({ net, kind: 'constant', value: logicOf(vHigh) });
+            } else if (sig.kind === 'square') {
                 const periodNs = 1e9 / sig.freqHz;
-                circuit.sources.push({ net, kind: 'square', periodNs, highNs: periodNs * sig.duty / 100, high, low });
+                const duty = sig.duty === undefined ? 50 : sig.duty;
+                circuit.sources.push({ net, kind: 'square', periodNs, highNs: periodNs * duty / 100, high: logicOf(vHigh), low: logicOf(vLow) });
             } else {
-                circuit.sources.push({ net, kind: 'constant', value: high });
+                // 正弦波・三角波: 1周期を細かく区切って電圧を求め、H / L / 不定（しきい値の間）の区間に分ける
+                const periodNs = 1e9 / sig.freqHz;
+                const N = 720;
+                const shape = sig.kind === 'sine'
+                    ? ph => Math.sin(2 * Math.PI * ph)
+                    : ph => (ph < 0.25 ? 4 * ph : ph < 0.75 ? 2 - 4 * ph : 4 * ph - 4);   // 三角波
+                const segments = [];
+                for (let i = 0; i < N; i++) {
+                    const value = logicOf(sig.offsetV + sig.vpp / 2 * shape(i / N));
+                    if (segments.length === 0 || segments[segments.length - 1].value !== value) {
+                        segments.push({ startNs: periodNs * i / N, value });
+                    }
+                }
+                circuit.sources.push({ net, kind: 'pattern', periodNs, segments });
             }
             addDriver(net, t.label);
         });
@@ -848,7 +871,7 @@ function createBreadboard(container, options = {}) {
         const built = buildCircuit();
 
         // 少しの時間だけ動かして、各ネットが H / L / 変化している のどれかを調べる（最初の 1/3 は無視）
-        const periods = built.circuit.sources.filter(s => s.kind === 'square').map(s => s.periodNs);
+        const periods = built.circuit.sources.filter(s => s.periodNs).map(s => s.periodNs);
         const windowNs = Math.min(5e6, Math.max(1000, 3 * Math.max(0, ...periods)));
         const result = simulateLogic(built.circuit, windowNs, { maxEvents: 50000 });
         const from = windowNs / 3;
@@ -944,7 +967,7 @@ function createBreadboard(container, options = {}) {
             holeId: null, signal: null, el: null, trayEl: null,
         };
         terminals.push(t);
-        addTerminalToTray(t);
+        if (options.leadTray !== false) addTerminalToTray(t);
         return t;
     }
 
@@ -969,7 +992,9 @@ function createBreadboard(container, options = {}) {
         changed();
     }
 
-    // 信号源の設定。{ kind: 'square', freqHz, vpp, offsetV, duty(%), enabled } か { kind: 'dc', volts, enabled }
+    // 信号源の設定
+    //   { kind: 'square' | 'sine' | 'ramp', freqHz, vpp, offsetV, duty(%・方形波のみ), enabled }
+    //   { kind: 'dc', volts, enabled }
     function setSignal(id, signal) {
         const t = terminalById(id);
         if (!t) return;
@@ -984,7 +1009,7 @@ function createBreadboard(container, options = {}) {
 
     // 穴に挿さった外部機器の線を描く（穴から斜め上に伸び、先に名札が付く）
     function renderLead(t) {
-        if (t.el) { t.el.remove(); t.el = null; }
+        if (t.el) { t.el.remove(); t.el = null; t.badgeEl = null; }
         if (t.trayEl) {
             t.trayEl.classList.toggle('bb-lead-plugged', !!t.holeId);
             t.trayEl.querySelector('.bb-lead-where').textContent = t.holeId ? holeById[t.holeId].label : '未接続';
@@ -1005,8 +1030,9 @@ function createBreadboard(container, options = {}) {
                                    fill: isDarkColor(t.color) ? '#fff' : '#111' }, g);
         label.textContent = t.short;
         const box = label.getBBox();
-        g.insertBefore(el('rect', { x: box.x - 3, y: box.y - 1.5, width: box.width + 6, height: box.height + 3, rx: 2,
-                                    fill: t.color, stroke: '#222', 'stroke-width': 0.6 }), label);
+        t.badgeEl = el('rect', { x: box.x - 3, y: box.y - 1.5, width: box.width + 6, height: box.height + 3, rx: 2,
+                                 fill: t.color, stroke: '#222', 'stroke-width': 0.6 });
+        g.insertBefore(t.badgeEl, label);
         g.addEventListener('contextmenu', e => { e.preventDefault(); unplugTerminal(t.id); });
         g.addEventListener('mouseover', () => { highlightNet(h); showTip(ex, ey, withState(`${t.label}（${h.label}・右クリックで外す）`, h)); });
         g.addEventListener('mouseout', () => { clearHighlight(); hideTip(); });
@@ -1065,6 +1091,38 @@ function createBreadboard(container, options = {}) {
         return Object.values(result);
     }
 
+    // ===================================================================
+    //  16. 回路の保存と復元（次の週の実験で同じ回路を使うため）
+    //   保存するのは IC・ジャンパ線・電源スイッチ。外部機器の線は本体側の結線として保存する
+    // ===================================================================
+    function getState() {
+        return {
+            ics: ics.map(ic => ({ type: ic.type, blockId: ic.blockId, column: ic.column, flipped: ic.flipped })),
+            wires: wires.map(w => ({ a: w.a, b: w.b, color: w.color })),
+            power: { ...power },
+        };
+    }
+
+    // 今の回路をすべて外してから、保存した回路を組み直す
+    function setState(state) {
+        terminals.forEach(t => { if (t.holeId) { t.holeId = null; renderLead(t); } });
+        [...wires].forEach(w => { w.el.remove(); wires.splice(wires.indexOf(w), 1); });
+        [...ics].forEach(ic => { ic.el.remove(); ics.splice(ics.indexOf(ic), 1); });
+        power.SW1 = false;
+        power.SW2 = false;
+        (state.ics || []).forEach(ic => {
+            const placed = placeIC(ic.type, ic.blockId, ic.column, false);
+            if (placed && ic.flipped) { placed.flipped = true; renderIC(placed); }
+        });
+        (state.wires || []).forEach(w => { if (holeById[w.a] && holeById[w.b]) addWire(w.a, w.b, w.color); });
+        const savedPower = state.power || {};
+        power.SW1 = Boolean(savedPower.SW1);
+        power.SW2 = Boolean(savedPower.SW2);
+        if (power.SW1) ics.forEach(randomizeFlipFlops);
+        renderPower();
+        changed();
+    }
+
     // --- 作成時に渡された外部機器の線を登録して、最初の状態を調べる ---
     (options.terminals || []).forEach(defineTerminal);
     analyze();
@@ -1072,8 +1130,11 @@ function createBreadboard(container, options = {}) {
     return {
         holes, wires, ics, power, terminals,
         addWire, removeWire, placeIC, removeIC,
-        setPower,
+        setPower, getState, setState,
         defineTerminal, plugTerminal, unplugTerminal, setSignal,
+        // 外部機器の線の名札（画面上の位置を取って、本体側のワイヤーをここまで引くのに使う）
+        getLeadAnchor: id => { const t = terminalById(id); return t && t.badgeEl ? t.badgeEl : null; },
+        getTerminalHole: id => { const t = terminalById(id); return t ? t.holeId : null; },
         simulate,
         getStatus: () => analysis.status.slice(),
         getNetState: holeId => {

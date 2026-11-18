@@ -1,8 +1,10 @@
 // =======================================================================
 //  実験器具シミュレータ  script.js
 //
-//  オシロスコープ・直流電源・発振器・AD/DA変換機(ITF-203B) を画面上で操作し、
+//  オシロスコープ・直流電源・発振器・AD/DA変換機(ITF-203B)・ブレッドボード(SRX-32PS) を画面上で操作し、
 //  端子同士を結線して波形を観察する学習用シミュレータ。
+//  ※ オシロの WaveGen・ロジックアナライザ（デジタル入力 D0〜D7）と、ブレッドボードとの結線は
+//    digital-ic.js にある（このファイルの後に読み込む）。このファイルからは関数名で呼び出す
 //
 //  【目次】
 //     1. 定数
@@ -47,6 +49,9 @@ const CHANNEL_COUPLING = { CH1: 'DC',     CH2: 'AC',   CH3: 'DC' };
 // ツマミで切り替わるレンジ（1-2-5 ステップ）
 const VOLT_STEPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0];   // [V/div]
 const TIME_STEPS = [                                                         // [s/div]
+    1e-9,     2e-9,     5e-9,       // 1ns, 2ns, 5ns（ロジックアナライザで IC の遅延時間を測る用）
+    1e-8,     2e-8,     5e-8,       // 10ns, 20ns, 50ns
+    1e-7,     2e-7,     5e-7,       // 100ns, 200ns, 500ns
     0.000001, 0.000002, 0.000005,   // 1us, 2us, 5us（AD/DA内部クロックなど高速信号用）
     0.00001,  0.00002,  0.00005,    // 10us, 20us, 50us
     0.0001,   0.0002,   0.0005,     // 100us, 200us, 500us
@@ -71,14 +76,18 @@ const INTERNAL_TEST_SIGNALS = {
 // 機器（側）ごとの端子名。端子名は index.html の <area> の title / alt と対応する
 const TERMINALS = {
     ps:   ['ch1pura', 'ch1mai', 'ch2pura', 'ch2mai', 'grd'],
-    osc:  ['Ch1', 'Ch2', 'Ch3'],
+    osc:  ['Ch1', 'Ch2', 'Ch3',
+           'GenOut', 'D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7'],   // Gen Out・DIGITAL はブレッドボードの穴へ繋ぐ
     fg:   ['fctnout', 'subout'],
     adda: ['TB1', 'TB2', 'TB3', 'TB4', 'TB5', 'TB6',
            'TP1', 'TP2', 'TP3', 'TP5', 'TP6', 'TP7', 'TP8', 'TP9', 'TP10', 'TP11', 'TP12'],
 };
 
+// ブレッドボードの穴にだけ繋げる端子（オシロの Gen Out と DIGITAL）
+const BREADBOARD_ONLY_TERMINALS = ['GenOut', 'D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7'];
+
 // メッセージに使う機器名
-const SIDE_NAMES = { ps: '直流電源', osc: 'オシロスコープ', fg: '発振器', adda: 'AD/DA変換機' };
+const SIDE_NAMES = { ps: '直流電源', osc: 'オシロスコープ', fg: '発振器', adda: 'AD/DA変換機', bb: 'ブレッドボード' };
 
 // 端子ごとのワイヤーの色
 const TERMINAL_COLORS = {
@@ -92,6 +101,9 @@ const TERMINAL_COLORS = {
     Ch1:     '#ffff00',   // 黄
     Ch2:     '#00ffff',   // 水色
     Ch3:     '#ff66ff',   // マゼンタ
+    GenOut:  '#e53935',   // 赤（WaveGen 出力）
+    D0: '#eeeeee', D1: '#8d6e63', D2: '#ef5350', D3: '#ff9800',   // デジタルプローブ（線ごとに色を変える）
+    D4: '#ffeb3b', D5: '#66bb6a', D6: '#42a5f5', D7: '#ab47bc',
     // 発振器
     fctnout: '#ff6600',   // オレンジ（メイン出力）
     subout:  '#cc44ff',   // 紫（サブ出力）
@@ -117,6 +129,9 @@ const IMPLEMENTED_BUTTONS = new Set([
     'CH1_MENU', 'CH2_MENU', 'CH3_MENU', 'Ch1', 'Ch2', 'Ch3', 'Ch4',
     'KNOB_TIME', 'KNOB_VOLT', 'Volt1', 'Volt2', 'Volt3', 'Volt4',
     'Pos1', 'Pos2', 'Level',
+    'WavaGen', 'Digital', 'Trigger', 'Entry', 'Posツマミ', 'Single', 'SavaRecall',
+    'Soft1', 'Soft2', 'Soft3', 'Soft4', 'Soft5', 'Soft6',
+    'GenOut', 'D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7',
     // 直流電源
     'ps_power', 'ch1btn', 'ch2btn', 'volt', 'curr', 'output',
     'ch1pura', 'ch1mai', 'ch2pura', 'ch2mai', 'grd',
@@ -156,7 +171,8 @@ const scopeState = {
     voltIndexCH1: 6,          // VOLT_STEPS の添字（初期値 1V/div）
     voltIndexCH2: 6,
     voltIndexCH3: 6,
-    timeIndex: 15,            // TIME_STEPS の添字（初期値 0.1s/div）
+    timeIndex: TIME_STEPS.indexOf(0.1),   // TIME_STEPS の添字（初期値 0.1s/div）
+    horizontalDelay: 0,       // 水平位置 [s]（Horizontal の位置ツマミ。画面中央に来る時刻をトリガ点からずらす）
     timeOffset: 0,            // 波形を流すための時刻（RUN中は毎フレーム進む）
 
     positionCH1: 0,           // 波形の上下位置 [px]
@@ -261,6 +277,7 @@ const instrumentScales = {
     'model-adda': 1.0,
     'model-fg': 1.0,
     'model-ps': 1.0,
+    'model-bb': 1.0,
 };
 
 // ドラッグ中の機器（.draggable-equipment）と、ドラッグ開始時の位置
@@ -446,6 +463,15 @@ const descriptions = {
 
 // 実験手順（左サイドバーの項目をクリックしたときにモーダルに表示する内容。body はHTML）
 const EXPERIMENT_DATA = {
+    // まだ作っていない実験
+    'exp-interface': {
+        title: '実験2：インターフェース',
+        body: '<p>この実験はまだシミュレータに入っていません。</p>',
+    },
+    'exp-sensor': {
+        title: '実験3：センサ',
+        body: '<p>この実験はまだシミュレータに入っていません。</p>',
+    },
     exp1: {
         title: '手順1：AD変換器の変換過程の観察',
         body: `
@@ -628,7 +654,11 @@ function applyContainerScale(container, scale) {
 
     const img = container.querySelector('img');
     const wrapper = container.closest('.draggable-equipment');
-    if (img && wrapper) {
+    if (!img && wrapper) {
+        // 写真のない機器（ブレッドボード）: 拡大縮小前の大きさ（offsetWidth/Height は transform の影響を受けない）から
+        wrapper.style.width  = `${container.offsetWidth * scale}px`;
+        wrapper.style.height = `${container.offsetHeight * scale}px`;
+    } else if (img && wrapper) {
         // 画像の下に状態表示バー（.status-strip）が付いている機器は、その高さも外枠に含める
         const strip = container.querySelector('.status-strip');
         const stripHeight = strip ? parseFloat(getComputedStyle(strip).height) : 0;
@@ -649,7 +679,7 @@ function setZoom(newZoom) {
     document.querySelectorAll('.instrument-container').forEach(container => {
         if (container.style.display === 'none') return;   // 表示していない方のオシロの機種は対象外
         const img = container.querySelector('img');
-        if (!img || img.naturalWidth === 0) return;       // 画像の読み込み前は何もしない
+        if (img && img.naturalWidth === 0) return;        // 画像の読み込み前は何もしない
         applyContainerScale(container, currentZoom / 100);
     });
 
@@ -702,7 +732,7 @@ function applySizeChange() {
 //  機器の表示切替・ドラッグ移動
 // -----------------------------------------------------------------------
 
-// 機器（'osc' | 'ps' | 'fg' | 'adda'）の表示 / 非表示を切り替える
+// 機器（'osc' | 'ps' | 'fg' | 'adda' | 'bb'）の表示 / 非表示を切り替える
 function toggleEquipment(eqId) {
     const container = document.getElementById(eqId + '-container');
     if (!container) return;
@@ -750,6 +780,8 @@ function onDragStart(e) {
     // 画面(canvas)とボタン(hotspot)の上ではドラッグを始めない
     if (e.target.tagName === 'CANVAS') return;
     if (e.target.classList.contains('hotspot')) return;
+    if (e.target.closest('#bb-root')) return;   // ブレッドボードの上は IC・配線の操作に使う（移動は上の帯で）
+    if (e.target.closest('button')) return;     // 機器に付けたボタン（ブレッドボードの「回路を保存」など）
 
     const target = e.target.closest('.draggable-equipment');
     if (!target) return;
@@ -783,12 +815,19 @@ function toggleExperimentSidebar() {
     document.getElementById('experiment-sidebar').classList.toggle('open');
 }
 
+// 実験1（AD/DA変換）の手順。モーダルの上にタブで並べ、手順1〜4 を切り替えられるようにする
+const AD_DA_PROCEDURES = ['exp1', 'exp2', 'exp3', 'exp4'];
+
 // 実験手順をモーダルに表示する（内容は 3章の EXPERIMENT_DATA）
 function showExperiment(expId) {
     const data = EXPERIMENT_DATA[expId];
     if (!data) return;
+    const tabs = AD_DA_PROCEDURES.includes(expId)
+        ? '<div class="exp-tabs">' + AD_DA_PROCEDURES.map((id, i) =>
+            `<button class="exp-tab${id === expId ? ' active' : ''}" onclick="showExperiment('${id}')">手順${i + 1}</button>`).join('') + '</div>'
+        : '';
     document.getElementById('exp-modal-title').textContent = data.title;
-    document.getElementById('exp-modal-body').innerHTML = data.body;
+    document.getElementById('exp-modal-body').innerHTML = tabs + data.body;
     document.getElementById('experiment-modal').style.display = 'block';
 }
 
@@ -918,10 +957,14 @@ function getChannelVoltage(ch, t) {
     return getBaseWaveVoltage(ch, t);
 }
 
-// トリガがかかる時刻（波形がトリガレベルを立ち上がりで横切る瞬間）を探す。
+// トリガがかかる時刻（波形がトリガレベルを、設定した向き（立ち上がり / 立ち下がり）で横切る瞬間）を探す。
 // 見つかればその時刻を返して波形を静止させ、見つからなければ現在時刻を返して波形を流す。
 function calculateTriggerOffset() {
     const { source, level, slope } = scopeState.trigger;
+
+    // トリガソースがデジタル入力（D0〜D7）のときは、ロジックアナライザの波形の端で止める（digital-ic.js）
+    if (isDigitalChannel(source)) return calculateDigitalTriggerTime();
+
     const signal = scopeState.signals[source];
     if (!signal) return scopeState.timeOffset;
 
@@ -941,11 +984,17 @@ function calculateTriggerOffset() {
         let after  = baseTime - (i * dt);         // 区間の新しい側の時刻
         let before = baseTime - ((i + 1) * dt);   // 区間の古い側の時刻
 
-        if (slope === 'rising' && voltageAt(before) < level && voltageAt(after) >= level) {
+        // 立ち上がり: レベルを下から上へ横切る / 立ち下がり: 上から下へ横切る
+        const isAbove = t => voltageAt(t) >= level;
+        const crosses = (slope === 'falling')
+            ? (isAbove(before) && !isAbove(after))
+            : (!isAbove(before) && isAbove(after));
+        if (crosses) {
             // 区間を半分ずつ狭めて、横切る瞬間を正確に求める（毎フレーム同じ位置で止めるため）
+            const afterSide = isAbove(after);
             for (let k = 0; k < 30; k++) {
                 const mid = (before + after) / 2;
-                if (voltageAt(mid) >= level) after = mid;
+                if (isAbove(mid) === afterSide) after = mid;
                 else before = mid;
             }
             scopeState.trigger.isTriggered = true;
@@ -997,6 +1046,7 @@ function drawWaveform() {
 
     drawGrid();
     drawChannelTraces();
+    drawDigitalChannels();   // ロジックアナライザ（D0〜D7）の波形（digital-ic.js）
     drawTriggerLevel();
     drawScaleReadout();
     drawAdDaInfo();
@@ -1023,12 +1073,15 @@ function drawChannelTraces() {
     const timeDiv = TIME_STEPS[scopeState.timeIndex];
     const centerY = canvas.height / 2;
 
-    // 画面中央をトリガ点（時刻0）にするための補正
+    // 画面中央をトリガ点（時刻0）＋水平位置にするための補正
     const triggerTime = calculateTriggerOffset();
-    const centerTimeShift = (canvas.width / 2 / PIXELS_PER_DIV) * timeDiv;
+    const centerTimeShift = (canvas.width / 2 / PIXELS_PER_DIV) * timeDiv - scopeState.horizontalDelay;
 
     (MODEL_CHANNELS[currentModelId] || ['CH1', 'CH2']).forEach(ch => {
         const signal = scopeState.signals[ch];
+
+        // デジタル入力を表示しているときは、線を繋いでいないアナログチャンネルは消しておく（重なって見づらいため）
+        if (isDigitalDisplayOn() && !getOscChannelConnection(ch)) return;
         const voltDiv = VOLT_STEPS[scopeState['voltIndex' + ch]];
 
         // 外部入力モードで線が繋がっていないチャンネルは、signals の内容に関係なく0Vで描く
@@ -1059,6 +1112,7 @@ function drawChannelTraces() {
 
 // トリガレベルの点線と、右端の「T」マーカー（CH1の電圧レンジ基準）
 function drawTriggerLevel() {
+    if (isDigitalChannel(scopeState.trigger.source)) return;   // デジタル入力のトリガにはレベルが無い
     const voltDiv = VOLT_STEPS[scopeState.voltIndexCH1];
     const trigY = canvas.height / 2 - (scopeState.trigger.level / voltDiv) * PIXELS_PER_DIV;
 
@@ -1093,6 +1147,14 @@ function drawTriggerLevel() {
     ctx.fillText('T', markerX - (markerWidth * 0.25), trigY + 1);
 }
 
+// 時間を s / ms / us / ns の見やすい単位の文字列にする（画面の表示用）
+function formatTimeText(sec) {
+    if (sec >= 1)     return `${sec.toFixed(2)}s`;
+    if (sec >= 0.001) return `${(sec * 1e3).toFixed(2)}ms`;
+    if (sec >= 1e-6)  return `${(sec * 1e6).toFixed(2)}us`;
+    return `${(sec * 1e9).toFixed(2)}ns`;
+}
+
 // 画面下端の表示（各チャンネルの電圧レンジと時間軸）
 function drawScaleReadout() {
     const y = canvas.height - 20;
@@ -1119,12 +1181,13 @@ function drawScaleReadout() {
 
     // 時間軸
     const timeDiv = TIME_STEPS[scopeState.timeIndex];
-    const tText = timeDiv >= 1     ? `${timeDiv.toFixed(2)}s`
-                : timeDiv >= 0.001 ? `${(timeDiv * 1000).toFixed(2)}ms`
-                :                    `${(timeDiv * 1000000).toFixed(0)}us`;
+    // 画面の広い機種（Agilent）は CH3 の表示と重ならないよう中央より右から、狭い機種は中央に書く
+    const isWide = canvas.width >= 1000;
     ctx.fillStyle = 'white';
-    ctx.textAlign = 'center';
-    ctx.fillText(`M ${tText}`, canvas.width / 2, y);
+    ctx.textAlign = isWide ? 'left' : 'center';
+    const delay = scopeState.horizontalDelay;
+    const delayText = delay !== 0 ? `   ▷ ${delay > 0 ? '+' : '−'}${formatTimeText(Math.abs(delay))}` : '';
+    ctx.fillText(`M ${formatTimeText(timeDiv)}${delayText}`, isWide ? 560 : canvas.width / 2, y);
 }
 
 // 左上の表示（発振器とAD/DA変換機の設定、サンプリング定理の判定）
@@ -1160,18 +1223,22 @@ function drawAdDaInfo() {
 
 // 右上の表示（トリガレベルと状態）
 function drawTriggerStatus() {
-    const statusText = scopeState.trigger.isTriggered ? "Trig'd" : 'Auto';
+    const { source, slope, level, isTriggered } = scopeState.trigger;
+    const statusText = isTriggered ? "Trig'd" : 'Auto';
+    const slopeMark = slope === 'falling' ? '↓' : '↑';
     ctx.font = 'bold 16px sans-serif';
     ctx.textAlign = 'right';
     ctx.fillStyle = 'rgba(255, 165, 0, 1)';
-    ctx.fillText(`T: ${scopeState.trigger.level.toFixed(2)}V (${statusText})`, canvas.width - 10, 30);
+    const levelText = isDigitalChannel(source) ? '' : ` ${level.toFixed(2)}V`;
+    ctx.fillText(`T: ${source} ${slopeMark}${levelText} (${statusText})`, canvas.width - 10, 30);
 }
 
 // メニュー（機種ごとに見た目が違う）
 function drawMenu() {
     if (!scopeState.currentMenu || !scopeState.isOn) return;
 
-    const data = MENU_DATA[currentModelId][scopeState.currentMenu];
+    // WaveGen・Digital・Trigger のメニューは、今の設定値から毎回作る（digital-ic.js）
+    const data = getDynamicMenu(scopeState.currentMenu) || MENU_DATA[currentModelId][scopeState.currentMenu];
     if (!data) return;
 
     if (currentModelId === 'hantek') drawMenuHantek(data);
@@ -1231,7 +1298,8 @@ function drawMenuHantek(data) {
 function drawMenuAgilent(data) {
     const menuHeight = 65;
     const menuY = canvas.height - menuHeight;
-    const themeColor = { CH1_MENU: 'yellow', CH2_MENU: 'cyan', CH3_MENU: '#ff66ff' }[scopeState.currentMenu] || '#ccc';
+    const themeColor = data.color
+        || { CH1_MENU: 'yellow', CH2_MENU: 'cyan', CH3_MENU: '#ff66ff' }[scopeState.currentMenu] || '#ccc';
 
     // 背景と上端の線
     ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
@@ -1257,6 +1325,15 @@ function drawMenuAgilent(data) {
         if (index >= buttonCount) return;
         const itemX = index * itemWidth;
         const centerX = itemX + (itemWidth / 2);
+
+        // Entry ツマミで変更中の項目は、枠で囲んで目立たせる
+        if (data.selected === index) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+            ctx.fillRect(itemX + 3, menuY + 3, itemWidth - 6, menuHeight - 6);
+            ctx.strokeStyle = themeColor;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(itemX + 3, menuY + 3, itemWidth - 6, menuHeight - 6);
+        }
 
         // 区切り線
         if (index > 0) {
@@ -1359,10 +1436,9 @@ function drawCursors() {
     const timePerPixel = TIME_STEPS[scopeState.timeIndex] / PIXELS_PER_DIV;
     const deltaT = Math.abs(cursor.posB - cursor.posA) * timePerPixel;
     const freq = deltaT > 0 ? (1 / deltaT) : 0;
-    const deltaTText = deltaT >= 1     ? `${deltaT.toFixed(2)} s`
-                     : deltaT >= 0.001 ? `${(deltaT * 1000).toFixed(2)} ms`
-                     :                   `${(deltaT * 1000000).toFixed(2)} us`;
-    const freqText = freq >= 1000 ? `${(freq / 1000).toFixed(2)} kHz` : `${freq.toFixed(2)} Hz`;
+    const deltaTText = formatTimeText(deltaT);
+    const freqText = freq >= 1e6  ? `${(freq / 1e6).toFixed(2)} MHz`
+                   : freq >= 1000 ? `${(freq / 1000).toFixed(2)} kHz` : `${freq.toFixed(2)} Hz`;
 
     // 電圧: カーソルの高さを、選択中のチャンネルの電圧に換算する
     const y1 = voltageOf(cursor.offsetY1);
@@ -1883,14 +1959,16 @@ function getOscChannelConnection(ch) {
 }
 
 // 接続1本の両端を [[側, 端子名], [側, 端子名]] で返す（信号源側が先）
+//   ブレッドボードへの接続は bbTerminal に「ブレッドボードに挿した線の名前」を持つ（digital-ic.js）
 function getConnectionEndpoints(conn) {
-    return ['ps', 'fg', 'adda', 'osc']
+    return ['ps', 'fg', 'adda', 'osc', 'bb']
         .filter(side => conn[side + 'Terminal'])
         .map(side => [side, conn[side + 'Terminal']]);
 }
 
 // 端子のホットスポット要素を取得する（オシロは表示中の機種のものを返す）
 function getTerminalElement(side, terminalName) {
+    if (side === 'bb') return getBreadboardLeadElement(terminalName);   // ブレッドボードに挿した線の名札
     const containerId = (side === 'osc') ? 'model-' + currentModelId : 'model-' + side;
     return document.querySelector(`#${containerId} .hotspot[title="${terminalName}"]`);
 }
@@ -1898,6 +1976,12 @@ function getTerminalElement(side, terminalName) {
 // -----------------------------------------------------------------------
 //  ワイヤーの描画
 // -----------------------------------------------------------------------
+
+// 要素が画面に表示されているか（非表示の機器の中にあると大きさが 0 になる）
+function isElementShown(el) {
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 || rect.height > 0;
+}
 
 // 要素の中心の画面座標
 function getCenterPos(el) {
@@ -1916,6 +2000,7 @@ function syncTerminalHighlights() {
     document.querySelectorAll('.hotspot.wire-connected').forEach(el => el.classList.remove('wire-connected'));
     wiringState.connections.forEach(conn => {
         getConnectionEndpoints(conn).forEach(([side, term]) => {
+            if (side === 'bb') return;
             const el = getTerminalElement(side, term);
             if (el) el.classList.add('wire-connected');
         });
@@ -1935,6 +2020,7 @@ function redrawWires() {
         const el1 = getTerminalElement(side1, term1);
         const el2 = getTerminalElement(side2, term2);
         if (!el1 || !el2) return;
+        if (!isElementShown(el1) || !isElementShown(el2)) return;   // 非表示の機器へ繋いだ線は描かない
         drawWire(svg, getCenterPos(el1), getCenterPos(el2), conn.color);
     });
 
@@ -1998,7 +2084,9 @@ function handleTerminalClick(terminalName, hotspotEl) {
             color: TERMINAL_COLORS[terminalName] || '#ffffff',
         };
         hotspotEl.classList.add('wire-selected');
-        showWireStatus(`🔌 端子「${terminalName}」を選択。次に接続先の端子をクリックしてください。`, 5000);
+        const target = canConnectToBreadboard(terminalName) ? 'ブレッドボードの穴' : '接続先の端子';
+        showWireStatus(`🔌 端子「${terminalName}」を選択。次に${target}をクリックしてください。`, 5000);
+        document.body.classList.toggle('bb-await-hole', canConnectToBreadboard(terminalName));
         redrawWires();
         return;
     }
@@ -2029,11 +2117,16 @@ function cancelPendingTerminal() {
     const pending = wiringState.pendingTerminal;
     if (pending && pending.el) pending.el.classList.remove('wire-selected');
     wiringState.pendingTerminal = null;
+    document.body.classList.remove('bb-await-hole');
 }
 
 // 2つの端子（{ terminalName, side }）を接続する。first が先に選んだ端子、second が後からクリックした端子。
 // 戻り値: { connected: 接続できたか, message: ステータスバーに出すメッセージ }
 function connectTerminals(first, second) {
+    // Gen Out・DIGITAL はブレッドボードの穴にだけ繋ぐ（穴のクリックは digital-ic.js が受け取る）
+    if ([first, second].some(t => BREADBOARD_ONLY_TERMINALS.includes(t.terminalName))) {
+        return { connected: false, message: '⚠️ Gen Out・DIGITAL（D0〜D7）は、ブレッドボードの穴に繋いでください。' };
+    }
     const term = { [first.side]: first.terminalName, [second.side]: second.terminalName };   // 側 → 端子名
     const sourceSide = term.ps ? 'ps' : (term.fg ? 'fg' : 'adda');                           // 信号を出す側
     const sourceTerm = term[sourceSide];
@@ -2094,6 +2187,7 @@ function disconnectTerminal(terminalName) {
     wiringState.connections = wiringState.connections.filter(c => c[key] !== terminalName);
 
     cancelPendingTerminal();
+    syncBreadboardLeads();   // ブレッドボードに挿していた線も抜く（digital-ic.js）
     refreshScopeSignals();
     redrawWires();
 
@@ -2106,6 +2200,7 @@ function disconnectTerminal(terminalName) {
 function clearAllWires() {
     wiringState.connections = [];
     cancelPendingTerminal();
+    syncBreadboardLeads();
     refreshScopeSignals();
     redrawWires();
     showWireStatus('🔌 すべての結線を解除しました。');
@@ -2162,6 +2257,7 @@ function applyFgSignals() {
     });
 
     clearUnwiredChannelSignals();
+    updateBreadboardSources();   // 発振器をブレッドボードに繋いでいれば、その信号も更新する（digital-ic.js）
 }
 
 // AD/DA変換機の端子を繋いだチャンネルの信号を作る
@@ -2273,7 +2369,7 @@ function onHotspotClick(e) {
     const title = hotspot.title;
     const side = getTerminalSide(title);
 
-    if (side === 'osc') {
+    if (side === 'osc' && ['Ch1', 'Ch2', 'Ch3'].includes(title)) {
         // オシロの入力端子は、チャンネル選択ボタンも兼ねている。
         // 1本目を選択済みのとき、または Shift+クリックのときだけ結線として扱う
         if (wiringState.pendingTerminal || e.shiftKey) {
@@ -2305,6 +2401,7 @@ function handleOscButton(title, hotspot) {
         } else {
             scopeState.currentMenu = null;
         }
+        updateBreadboardSources();   // WaveGen はオシロの電源が入っているときだけ出力する（digital-ic.js）
         return;
     }
 
@@ -2332,15 +2429,28 @@ function handleOscButton(title, hotspot) {
         return;
     }
 
+    // Single: 次のトリガで1回だけ取り込んで止まる（止まるたびに別の場面が映る）
+    if (title === 'Single') {
+        if (!scopeState.isOn) return;
+        scopeState.timeOffset -= 0.0001 * (1 + Math.floor(Math.random() * 30));
+        scopeState.isRunning = false;
+        showWireStatus('📸 Single: 1回だけ取り込んで停止しました（Run/Stop で再開）');
+        return;
+    }
+
     // 以下は電源ONのときだけ反応する
     if (!scopeState.isOn) return;
+
+    // WaveGen・Digital・Trigger のボタンと、そのメニューのソフトキー（digital-ic.js）
+    if (handleDigitalOscButton(title, hotspot)) return;
 
     if (title === 'AutoSet') {
         // 見やすい設定に戻す（1V/div・0.1s/div）
         scopeState.voltIndexCH1 = 6;
         scopeState.voltIndexCH2 = 6;
-        scopeState.timeIndex = 15;
+        scopeState.timeIndex = TIME_STEPS.indexOf(0.1);
         scopeState.timeOffset = 0;
+        scopeState.horizontalDelay = 0;
         scopeState.currentMenu = null;
 
     } else if (title === 'Meas' || title === 'Measure') {
@@ -2403,6 +2513,19 @@ function onHotspotWheel(e) {
         const ch = { Volt1: 'CH1', Volt2: 'CH2', Volt3: 'CH3' }[title] || scopeState.activeChannel;
         const key = 'voltIndex' + ch;
         scopeState[key] = stepIndex(scopeState[key], e.deltaY, VOLT_STEPS.length);
+
+    // --- オシロ: Entry ツマミ（WaveGen などのメニューで選んだ項目の値を変える。digital-ic.js）---
+    } else if (title === 'Entry') {
+        e.preventDefault();
+        handleEntryKnob(e.deltaY < 0 ? +1 : -1);
+
+    // --- オシロ: 水平位置ツマミ（画面を1目盛ずつ左右にずらす。遅延時間の測定で端を画面に入れる）---
+    } else if (title === 'Posツマミ') {
+        e.preventDefault();
+        if (!scopeState.isOn) return;
+        const step = TIME_STEPS[scopeState.timeIndex];
+        scopeState.horizontalDelay += (e.deltaY > 0) ? step : -step;
+        if (Math.abs(scopeState.horizontalDelay) < step / 2) scopeState.horizontalDelay = 0;
 
     // --- オシロ: 時間軸ツマミ ---
     } else if (title === 'KNOB_TIME') {
@@ -2515,7 +2638,8 @@ function isNear(value, target, tolerance) {
 function formatTimeDiv(sec) {
     if (sec >= 1) return sec + 's';
     if (sec >= 0.001) return Math.round(sec * 1000 * 100) / 100 + 'ms';
-    return Math.round(sec * 1000000 * 100) / 100 + 'µs';
+    if (sec >= 1e-6) return Math.round(sec * 1000000 * 100) / 100 + 'µs';
+    return Math.round(sec * 1e9 * 100) / 100 + 'ns';
 }
 function formatVoltDiv(volt) {
     return volt >= 1 ? volt + 'V' : Math.round(volt * 1000) + 'mV';
@@ -2564,7 +2688,7 @@ const quizData = [
     // ---------------------------------------------------------------
     {
         makeParams: () => ({
-            timeIndex: randomPick([0, 1, 2, 3]),            // 1µs / 2µs / 5µs / 10µs
+            timeIndex: TIME_STEPS.indexOf(randomPick([1e-6, 2e-6, 5e-6, 1e-5])),   // 1µs / 2µs / 5µs / 10µs
             voltIndex: randomPick([6, 7, 8]),               // 1V / 2V / 5V
             level:     randomPick([1.0, 1.5, 2.0, 2.5, 3.0]),
         }),
@@ -2792,4 +2916,4 @@ renderPsDisplay();
 updateAdDaStatus();
 
 // 描画ループ開始
-animationLoop();
+animationLoop();
